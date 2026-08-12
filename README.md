@@ -20,23 +20,28 @@ KylinRCA is currently developed and tested on:
 sudo apt install -y \
     git make cmake gcc g++ clang llvm \
     bpftool libbpf-dev libelf-dev zlib1g-dev pkg-config
+```
 
 ### Generate vmlinux.h
 
 The eBPF programs use BTF/CO-RE.
-
 Generate the kernel type header with:
-./scripts/gen_vmlinux.sh
 
-The generated file is:
-bpf/include/vmlinux.h
+```bash
+./scripts/gen_vmlinux.sh
+```
+The generated file is: bpf/include/vmlinux.h
 
 vmlinux.h is generated from the target kernel BTF and is therefore not committed to the repository.
 
 ### Build
 
 Configure:
+```bash
 cmake -S . -B build
+```
 
-Build:
+BUild:
+```bash
 cmake --build build
+```
