@@ -1,0 +1,22 @@
+# Build outputs
+build/
+*.o
+*.so
+
+# Logs and raw reports
+*.log
+reports/raw/
+
+# IDE files
+.vscode/
+.idea/
+
+# Generated eBPF files
+*.skel.h
+vmlinux.h
+
+# OS metadata
+.DS_Store
+
+# Local configuration
+config.local.yaml
