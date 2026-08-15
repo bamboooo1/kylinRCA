@@ -34,3 +34,15 @@ target_link_libraries(
 	kylinrca_loader 
 	PRIVATE 
 	PkgConfig::LIBBPF)#给叫kylinrca_loader的程序链接PkgConfig::LIBBPF库
+
+add_executable(
+    kylinrca_syscall_analyzer_smoke
+    tests/syscall_analyzer_smoke.cpp
+    src/syscall_analyzer.cpp
+)
+
+target_include_directories(
+    kylinrca_syscall_analyzer_smoke
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
