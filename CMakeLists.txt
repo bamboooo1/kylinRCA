@@ -22,7 +22,8 @@ pkg_check_modules(LIBBPF REQUIRED IMPORTED_TARGET libbpf)
 add_executable(
 	kylinrca_loader 
 	src/bpf_loader.cpp
-	src/event_queue.cpp) #让cmake创造一个叫kylinrca_loader的程序，源码是src/bpf_loader.cpp,src/event_queue.cpp
+	src/event_queue.cpp
+	src/ring_buffer_consumer.cpp) #让cmake创造一个叫kylinrca_loader的程序，源码是src/bpf_loader.cpp,src/event_queue.cpp
 
 target_include_directories(
 	kylinrca_loader
