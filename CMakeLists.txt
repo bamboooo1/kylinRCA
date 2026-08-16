@@ -46,3 +46,16 @@ target_include_directories(
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+add_executable(
+    kylinrca_json_reporter_smoke
+    tests/json_reporter_smoke.cpp
+    src/syscall_analyzer.cpp
+    src/json_reporter.cpp
+)
+
+target_include_directories(
+    kylinrca_json_reporter_smoke
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
