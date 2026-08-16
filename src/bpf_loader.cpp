@@ -34,7 +34,7 @@ int main(){
         std::cout << "Failed to load BPF object, error: "
                   << err
                   << std::endl;
-        
+        bpf_object__close(obj);
         return 1;
     }
     std::cout << "Successfully loaded BPF object into kernel"
