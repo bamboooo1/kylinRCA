@@ -2,7 +2,9 @@
 #ifndef KYLINRCA_EVENT_H
 #define KYLINRCA_EVENT_H
 
+#ifndef __VMLINUX_H__ //Kernel/User 共用协议的头文件结构要避免头文件依赖的冲突
 #include <linux/types.h>
+#endif
 
 #define KYLINRCA_EVENT_VERSION 1
 
@@ -15,7 +17,7 @@ enum event_type {
     EVENT_TYPE_MEMORY  = 5,
 };
 
-struct event_header {
+struct kylinrca_event_header {
     __u16 version;
     __u16 type;
     __u32 size;
@@ -26,7 +28,7 @@ struct event_header {
 };
 
 struct syscall_event {
-    struct event_header header;
+    struct kylinrca_event_header header;
 
     __s64 syscall_id;
     __s64 ret;
