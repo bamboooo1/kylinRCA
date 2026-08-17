@@ -70,10 +70,18 @@ add_custom_target(
 )
 
 add_executable(
-	kylinrca_loader 
-	src/bpf_loader.cpp
-	src/event_queue.cpp
-	src/ring_buffer_consumer.cpp) #让cmake创造一个叫kylinrca_loader的程序，源码是src/bpf_loader.cpp,src/event_queue.cpp
+    kylinrca_loader
+    src/bpf_loader.cpp
+    src/event_queue.cpp
+    src/ring_buffer_consumer.cpp
+    src/syscall_analyzer.cpp
+    src/json_reporter.cpp
+) #让cmake创造一个叫kylinrca_loader的程序，源码是src/bpf_loader.cpp,src/event_queue.cpp
+
+add_dependencies(
+    kylinrca_loader
+    syscall_bpf
+) # 想构建 kylinrca_loader，必须先把 syscall_bpf 构建出来。
 
 target_include_directories(
 	kylinrca_loader
