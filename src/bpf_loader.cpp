@@ -126,6 +126,10 @@ int main()
         EventQueue queue;
         RingBufferConsumer consumer(queue);
         SyscallAnalyzer analyzer;
+        
+        const auto cleanup_interval = std::chrono::seconds(60);// 每隔多久执行一次历史 PID 清理。
+        const auto exited_pid_retention = std::chrono::seconds(60); // 已退出 PID 至少保留多久。
+        auto last_cleanup = std::chrono::steady_clock::now();
 
         // 9. 让用户态 Consumer 监听 BPF 中的 events RingBuffer
         if (!consumer.init(obj)) {
@@ -157,6 +161,17 @@ int main()
                     syscall_event event = queue.pop();
                     analyzer.process(event);
                 }
+
+                 // ---------- 新增：周期清理 ----------
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_cleanup >= cleanup_interval)
+                 {
+                    const std::size_t removed = analyzer.cleanup_exited_processes(exited_pid_retention);
+                    std::cerr << "[cleanup] removed=" << removed << ", tracked_processes=" << analyzer.process_count()
+                              << std::endl;
+                    last_cleanup = now;
+                }
+
             }
 
             // 11. 将真实内核事件统计转换成 JSON
