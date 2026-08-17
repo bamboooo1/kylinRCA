@@ -1,20 +1,11 @@
 #include <vmlinux.h>
 #include <bpf/bpf_helpers.h>
 
+#include "event.h"
+
 struct syscall_start {
 	__u64 timestamp_ns;
-	__s32 syscall_id;
-};
-
-struct syscall_event { 
-    __u32 pid;
-    __u32 tid;
-
-    __s64 syscall_id;
-    __s64 ret;
-
-    __u64 timestamp_ns;
-    __u64 duration_ns;
+	__s64 syscall_id;
 };
 
 
@@ -94,13 +85,18 @@ int handle_sys_exit(struct trace_event_raw_sys_exit *ctx)
 		return 1;
 	}
 
-	event->pid = pid_tgid >> 32; //右移32位，取高32位得到pid
-	event->tid = (__u32)pid_tgid; //强制类型转换，得到低32位；
-	event->syscall_id = start->syscall_id;
-	event->ret = ctx->ret; //当前 syscall 最终返回值，做异常定位
-	event->timestamp_ns = start->timestamp_ns;
-	event->duration_ns = end_ns - start->timestamp_ns; //syscall 内核执行路径的elapsed time
+        event->header.version = KYLINRCA_EVENT_VERSION;
+        event->header.type = EVENT_TYPE_SYSCALL;
+        event->header.size = sizeof(*event);
 
+        event->header.timestamp_ns = start->timestamp_ns;
+        event->header.pid = pid_tgid >> 32; //右移32位，取高32位得到pid
+        event->header.tid = (__u32)pid_tgid; //强制类型转换，得到低32位；
+
+        event->syscall_id = start->syscall_id;
+        event->ret = ctx->ret; //当前 syscall 最终返回值，做异常定位
+
+        event->duration_ns = end_ns - start->timestamp_ns; //syscall 内核执行路径的elapsed time
 	bpf_ringbuf_submit(event, 0); 
 
 	bpf_map_delete_elem(&start_map, &pid_tgid);
