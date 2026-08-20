@@ -40,6 +40,14 @@ set(SYSCALL_BPF_OBJECT
     ${CMAKE_CURRENT_BINARY_DIR}/syscall.bpf.o
 )
 
+set(CPU_BPF_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/bpf/cpu.bpf.c
+)
+
+set(CPU_BPF_OBJECT
+    ${CMAKE_CURRENT_BINARY_DIR}/cpu.bpf.o
+)
+
 add_custom_command(
     OUTPUT
         ${SYSCALL_BPF_OBJECT}
@@ -68,6 +76,36 @@ add_custom_target(
     syscall_bpf
     ALL
     DEPENDS ${SYSCALL_BPF_OBJECT}
+)
+
+add_custom_command(
+    OUTPUT
+        ${CPU_BPF_OBJECT}
+
+    COMMAND
+        ${CLANG_EXECUTABLE}
+        -g
+        -O2
+        -target bpf
+        -D__TARGET_ARCH_${BPF_TARGET_ARCH}
+        -I${CMAKE_CURRENT_SOURCE_DIR}/bpf/include
+        -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -c ${CPU_BPF_SOURCE}
+        -o ${CPU_BPF_OBJECT}
+
+    DEPENDS
+        ${CPU_BPF_SOURCE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/event.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/bpf_common.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/vmlinux.h
+
+    VERBATIM
+)
+
+add_custom_target(
+    cpu_bpf
+    ALL
+    DEPENDS ${CPU_BPF_OBJECT}
 )
 
 add_executable(
@@ -117,4 +155,26 @@ target_include_directories(
     kylinrca_json_reporter_smoke
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_executable(
+    kylinrca_cpu_probe_smoke
+    tests/cpu_probe_test.cpp
+)
+
+target_include_directories(
+    kylinrca_cpu_probe_smoke
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+    kylinrca_cpu_probe_smoke
+    PRIVATE
+    PkgConfig::LIBBPF
+)
+
+add_dependencies(
+    kylinrca_cpu_probe_smoke
+    cpu_bpf
 )
