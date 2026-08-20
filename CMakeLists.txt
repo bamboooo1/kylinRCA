@@ -58,6 +58,7 @@ add_custom_command(
     DEPENDS
         ${SYSCALL_BPF_SOURCE}
         ${CMAKE_CURRENT_SOURCE_DIR}/include/event.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/bpf_common.h
         ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/vmlinux.h
 
     VERBATIM

@@ -2,54 +2,54 @@
 #include <bpf/bpf_helpers.h>
 
 #include "event.h"
+#include "bpf_common.h"
 
 struct syscall_start {
 	__u64 timestamp_ns;
 	__s64 syscall_id;
 };
 
+/*
+ * Syscall 临时状态：
+ *
+ * key   = pid_tgid
+ * value = syscall enter 时的信息
+ */
+KYLINRCA_DECLARE_HASH_MAP(
+    start_map,
+    __u64,
+    struct syscall_start,
+    16384
+); // 创建了一个名叫 start_map 的全局 Map 定义，所以后面的函数可以直接使用
 
-struct {
-	__uint(type, BPF_MAP_TYPE_HASH); //创建一种 Hash 类型的 BPF Map 用于保存syscall临时状态
-	__uint(max_entries, 16384); //这个 Hash Map 最多容纳 16384 个 key-value
-	__type(key, __u64);
-	__type(value, struct syscall_start);
-} start_map SEC(".maps"); //把这个对象放到 ELF 文件的 .maps section。
-			  
-struct {
-	__uint(type, BPF_MAP_TYPE_RINGBUF);// 环形缓冲区，把完整事件传给用户态
-	__uint(max_entries, 256 * 1024); //RingBuffer 总容量，单位是 byte
-} events SEC(".maps");
+KYLINRCA_DECLARE_RINGBUF(
+    events,
+    256 * 1024
+);// 环形缓冲区，把完整事件传给用户态
 
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);// 创建数组保存用户态自身的tracer PID
-	__uint(max_entries, 1);
-	__type(key, __u32);
-	__type(value, __u32);
-} config_map SEC(".maps");
+
+/*
+ * config_map[0] = tracer PID
+ */
+KYLINRCA_DECLARE_TRACER_PID_MAP(config_map);
 			  
 SEC("tracepoint/raw_syscalls/sys_enter") //挂载到sys_enter，Linux内核调用
 int handle_sys_enter(struct trace_event_raw_sys_enter *ctx)
 {
-	__u64 pid_tgid;
-	__u32 config_key = 0;
-	__u32 *tracer_pid;
-	struct syscall_start start= {}; //把整个结构体初始化为 0
+    __u64 pid_tgid;
+    struct syscall_start start = {};
 
-	pid_tgid = bpf_get_current_pid_tgid();//得到的就是这个 syscall 调用者
-	tracer_pid = bpf_map_lookup_elem(&config_map, &config_key);
+    pid_tgid = bpf_get_current_pid_tgid(); // 使用 BPF common 获取 PID/TID 组合值。
 
-	if(tracer_pid && (__u32)(pid_tgid >> 32) == *tracer_pid) //忽略用户态自身的PID，避免自观测反馈
-	{
-		return 0;
-	}	
+    if (kylinrca_should_skip_tracer(&config_map, pid_tgid))
+        return 0; // 忽略 KylinRCA tracer 自己产生的 syscall
 
-	start.timestamp_ns = bpf_ktime_get_ns();
-	start.syscall_id = ctx->id; //保存syscall id
+    start.timestamp_ns = bpf_ktime_get_ns();
+    start.syscall_id = ctx->id;
 
-	bpf_map_update_elem(&start_map, &pid_tgid, &start, BPF_ANY);
+    bpf_map_update_elem(&start_map, &pid_tgid, &start, BPF_ANY); // （操作哪个 Map，key 的地址， value 的地址， 存在就覆盖，不存在就新增）
 
-	return 0;
+    return 0;
 }
 
 SEC("tracepoint/raw_syscalls/sys_exit")
@@ -57,24 +57,17 @@ int handle_sys_exit(struct trace_event_raw_sys_exit *ctx)
 {
 	__u64 pid_tgid;
 	__u64 end_ns;
-	__u32 config_key = 0;
-	__u32 *tracer_pid;
+
 	struct syscall_start *start; //bpf_map_lookup_elem() 成功以后返回的是：指向 Map 中 value 的指针
 	struct syscall_event *event;				
 
 	pid_tgid = bpf_get_current_pid_tgid();
 
-	tracer_pid = bpf_map_lookup_elem(&config_map, &config_key);
-
-	if (tracer_pid && (__u32)(pid_tgid >> 32) == *tracer_pid)
-        	return 0;
+	if (kylinrca_should_skip_tracer(&config_map, pid_tgid))  return 0;
 
 	start = bpf_map_lookup_elem(&start_map, &pid_tgid);
 
-	if(!start)
-	{
-		return 1;
-	}
+	if(!start) return 1;
 
 	end_ns = bpf_ktime_get_ns();
 
@@ -85,18 +78,18 @@ int handle_sys_exit(struct trace_event_raw_sys_exit *ctx)
 		return 1;
 	}
 
-        event->header.version = KYLINRCA_EVENT_VERSION;
-        event->header.type = EVENT_TYPE_SYSCALL;
-        event->header.size = sizeof(*event);
+    event->header.version = KYLINRCA_EVENT_VERSION;
+    event->header.type = EVENT_TYPE_SYSCALL;
+    event->header.size = sizeof(*event);
 
-        event->header.timestamp_ns = start->timestamp_ns;
-        event->header.pid = pid_tgid >> 32; //右移32位，取高32位得到pid
-        event->header.tid = (__u32)pid_tgid; //强制类型转换，得到低32位；
+    event->header.timestamp_ns = start->timestamp_ns;
+    event->header.pid = kylinrca_pid_from_pid_tgid(pid_tgid);
+    event->header.tid = kylinrca_tid_from_pid_tgid(pid_tgid);
 
-        event->syscall_id = start->syscall_id;
-        event->ret = ctx->ret; //当前 syscall 最终返回值，做异常定位
+    event->syscall_id = start->syscall_id;
+    event->ret = ctx->ret; //当前 syscall 最终返回值，做异常定位
 
-        event->duration_ns = end_ns - start->timestamp_ns; //syscall 内核执行路径的elapsed time
+    event->duration_ns = end_ns - start->timestamp_ns; //syscall 内核执行路径的elapsed time
 	bpf_ringbuf_submit(event, 0); 
 
 	bpf_map_delete_elem(&start_map, &pid_tgid);
