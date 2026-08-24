@@ -160,6 +160,7 @@ target_include_directories(
 add_executable(
     kylinrca_cpu_probe_smoke
     tests/cpu_probe_test.cpp
+    src/cpu_analyzer.cpp
 )
 
 target_include_directories(
