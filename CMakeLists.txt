@@ -179,3 +179,27 @@ add_dependencies(
     kylinrca_cpu_probe_smoke
     cpu_bpf
 )
+
+add_executable(
+    kylinrca_proc_cpu_sampler_smoke
+    tests/proc_cpu_sampler_smoke.cpp
+    src/proc_cpu_sampler.cpp
+)
+
+target_include_directories(
+    kylinrca_proc_cpu_sampler_smoke
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_executable(
+    kylinrca_proc_cpu_sampler_stability
+    tests/proc_cpu_sampler_stab.cpp
+    src/proc_cpu_sampler.cpp
+)
+
+target_include_directories(
+    kylinrca_proc_cpu_sampler_stability
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
