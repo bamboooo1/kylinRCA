@@ -383,6 +383,10 @@ int main()
                 << std::endl;
 
             std::cout
+                << "  PID=" << stat.pid
+                << std::endl;
+
+            std::cout
                 << "  runqueue_count="
                 << stat.runqueue_count
                 << std::endl;

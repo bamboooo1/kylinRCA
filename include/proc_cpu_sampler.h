@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 struct CpuStatSample {
     std::uint64_t user = 0; //用户态普通进程运行时间
@@ -25,6 +26,25 @@ struct ProcessCpuStatSample {
 };
 
 /*
+ * 全系统线程 CPU 快照中的一条记录。
+ *
+ * pid 是线程组 ID（进程 ID），tid 是具体线程 ID。utime/stime 来自
+ * /proc/<pid>/task/<tid>/stat，用于计算每个线程在采样窗口内的 CPU
+ * 使用率。
+ */
+struct ThreadCpuStatSample {
+    int pid = 0;
+    int tid = 0;
+    std::string comm;
+    char state = '?';
+    std::uint64_t utime = 0;
+    std::uint64_t stime = 0;
+};
+
+using ThreadCpuStatMap =
+    std::unordered_map<std::uint32_t, ThreadCpuStatSample>;
+
+/*
  * 读取 /proc/stat 第一行。
  *
  * 成功：
@@ -38,6 +58,14 @@ bool read_system_cpu_stat(CpuStatSample& sample);
 
 bool read_process_cpu_stat(int pid, ProcessCpuStatSample& sample);
 
+/*
+ * 扫描 /proc/<pid>/task/<tid>/stat，建立当前全系统线程 CPU 快照。
+ *
+ * 扫描过程中进程或线程随时可能退出；单个条目读取失败时跳过，只有最终
+ * 一个线程都没有读到时才返回 false。
+ */
+bool read_all_thread_cpu_stats(ThreadCpuStatMap& samples);
+
 std::uint64_t cpu_total_time(const CpuStatSample& sample);
 
 std::uint64_t cpu_idle_time(const CpuStatSample& sample);
@@ -45,6 +73,13 @@ std::uint64_t cpu_idle_time(const CpuStatSample& sample);
 bool calculate_system_cpu_usage(
     const CpuStatSample& previous,
     const CpuStatSample& current,
+    double& usage_percent);
+
+bool calculate_thread_cpu_usage(
+    const ThreadCpuStatSample& previous,
+    const ThreadCpuStatSample& current,
+    double elapsed_seconds,
+    long clock_ticks_per_second,
     double& usage_percent);
 
 bool calculate_process_cpu_usage(
