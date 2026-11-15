@@ -1,0 +1,35 @@
+{
+  "label": "nested-pid",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.191,
+  "samples": 31,
+  "hot_samples": 14,
+  "worker_pids": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "alert_latency_seconds": 3.161768174,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 99.76500522458736,
+  "max_hot_bpf_percent": 100.0,
+  "log": "/tmp/kylinrca-cpu-validation/nested-pid.log",
+  "max_usage_difference_pp_from_saved_log": 0.8847483060969523,
+  "repository_log": "records/nested-pid.txt"
+}

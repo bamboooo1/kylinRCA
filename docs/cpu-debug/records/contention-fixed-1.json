@@ -1,0 +1,43 @@
+{
+  "label": "contention-fixed-1",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.185,
+  "samples": 31,
+  "hot_samples": 14,
+  "worker_pids": [
+    46226,
+    46227,
+    46228,
+    46229,
+    46230,
+    46231,
+    46232,
+    46233,
+    46234,
+    46235,
+    46236,
+    46237,
+    46238,
+    46239,
+    46240,
+    46241
+  ],
+  "alert_latency_seconds": 3.300775638,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 49.732450891003154,
+  "max_hot_bpf_percent": 79.65023957143433,
+  "log": "/tmp/kylinrca-cpu-validation/contention-fixed-1.log",
+  "max_usage_difference_pp_from_saved_log": 4.0803395714343225,
+  "repository_log": "records/contention-fixed-1.txt"
+}

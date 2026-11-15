@@ -1,109 +1,39 @@
 #include "bpf_common.h"
 #include "event.h"
+#include "cpu_probe_stats.h"
+#include "cpu_runtime.h"
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_tracing.h>
 
-/*
- * 当前 Ubuntu 内核 sched_switch 的 prev_state：
- *
- * 低 8 位表示任务状态。
- * 低 8 位为 0 表示任务仍然 runnable。
- *
- * 当前先按 Ubuntu 实际 tracepoint format 实现。
- * ARM64 / 不同内核版本兼容后续统一处理。
- */
-#define KYLINRCA_SCHED_STATE_MASK 0xffUL
-
-
-/*
- * runnable_ts_map: 记录“开始等 CPU”的时间
- */
-KYLINRCA_DECLARE_HASH_MAP(
-    runnable_ts_map,
-    __u32,
-    __u64,
-    16384
-);
-
-
-/*
- * oncpu_start_map: 记录“开始占用 CPU”的时间
- */
-KYLINRCA_DECLARE_HASH_MAP(
-    oncpu_start_map,
-    __u32,
-    __u64,
-    16384
-);
-
-
-/*
- * CPU 调度事件通过该 RingBuffer
- * 发送到用户态 CpuAnalyzer。
- */
-KYLINRCA_DECLARE_RINGBUF(
-    events,
-    256 * 1024
-);
-
-
-/*
- * 记录 tracer 的进程 PID
- */
-KYLINRCA_DECLARE_TRACER_PID_MAP(config_map);
-
-
-/*
- * 记录“需要从 CPU 调度观测中排除的 tracer 线程 TID”
- *
- * 它主要是为了解决用户态 PID 与调度 tracepoint 中 TID 可能不一致的问题。
- * 
- * config_map[0] 中的用户态 tracer PID
-                ↓
- * sched_switch 时识别 current 属于 tracer
-                ↓
- * 取得 ctx->prev_pid
-                ↓
- * 写入 cpu_ignored_tids
-                ↓
- * 后续忽略这个 scheduler-visible TID
- *
- */
-KYLINRCA_DECLARE_HASH_MAP(
-    cpu_ignored_tids,
-    __u32,
-    __u8,
-    64
-);
-
-
-/*
- * Probe 自身运行状态统计。
- */
-enum cpu_stat_key {
-    CPU_STAT_WAKEUP_UPDATE_FAIL = 0,
-    CPU_STAT_WAKEUP_MISS,
-    CPU_STAT_ONCPU_UPDATE_FAIL,
-    CPU_STAT_ONCPU_MISS,
-    CPU_STAT_REQUEUE_UPDATE_FAIL,
-    CPU_STAT_RINGBUF_DROP,
-    CPU_STAT_DELETE_FAIL,
-    CPU_STAT_MAX,
+/* 临时状态始终使用初始 namespace 的内核 TID，禁止混入可见 TID。 */
+struct timestamp_value {
+    __u64 time_ns;
+    __u64 birth_ns;
 };
-
-
-/*
- * 使用 PERCPU_ARRAY：
- *
- * 高频 tracepoint 下不同 CPU 修改自己的 counter，
- * 避免所有 CPU 竞争同一个计数值。
- */
+KYLINRCA_DECLARE_HASH_MAP(runnable_ts_map, __u32, struct timestamp_value, 16384);
+KYLINRCA_DECLARE_HASH_MAP(oncpu_start_map, __u32, struct timestamp_value, 16384);
+KYLINRCA_DECLARE_HASH_MAP(runtime_map, __u32, struct cpu_runtime_value, 16384);
+/* 任务释放时 thread_pid 可能已解除关联，保存带生命周期的可见 ID 用于回收。 */
+struct task_identity {
+    __u32 tid;
+    __u32 pid;
+    __u64 birth_ns;
+};
+KYLINRCA_DECLARE_HASH_MAP(task_ids, __u32, struct task_identity, 16384);
+KYLINRCA_DECLARE_RINGBUF(events, 256 * 1024);
+KYLINRCA_DECLARE_TRACER_PID_MAP(config_map);
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct cpu_namespace_config);
+} namespace_config SEC(".maps");
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, CPU_STAT_MAX);
     __type(key, __u32);
     __type(value, __u64);
 } cpu_stats SEC(".maps");
-
-/* Per-CPU sequence used to batch RingBuffer wakeups. */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
     __uint(max_entries, 1);
@@ -111,626 +41,239 @@ struct {
     __type(value, __u64);
 } ringbuf_submit_seq SEC(".maps");
 
-
-/*
- * 增加 Probe 内部统计计数。
- *
- * __always_inline：
- * 强制编译器内联展开，适合 BPF helper 风格的小函数。
- */
 static __always_inline void inc_cpu_stat(__u32 key)
 {
-    __u64 *value;
-
-    value = bpf_map_lookup_elem(
-        &cpu_stats,
-        &key);
-
+    __u64 *value = bpf_map_lookup_elem(&cpu_stats, &key);
     if (value)
         (*value)++;
 }
 
-
 /*
- * 判断 sched_switch 中：
- *
- * 被切下 CPU 的 prev task
- * 是否仍然处于 runnable 状态。
- *
- * 如果仍 runnable，说明它不是主动睡眠，
- * 而是被抢占，需要重新开始计算 runqueue delay。
+ * 选择观测者的 namespace，而不是任务自己的最深层 namespace。
+ * 同一宿主机可能有多个容器，各自都能有 TID=162；内部 key 绝不能混用。
+ * 不在观测者 namespace 中可见的任务返回 0，不冒充可见任务。
  */
-static __always_inline int prev_is_runnable(long prev_state)
+static __always_inline __u32 visible_id(struct task_struct *task, int leader)
 {
-    return (
-        prev_state &
-        KYLINRCA_SCHED_STATE_MASK
-    ) == 0;
+    __u32 zero = 0;
+    struct cpu_namespace_config *cfg = bpf_map_lookup_elem(&namespace_config, &zero);
+    if (!cfg || !cfg->inode)
+        return 0;
+    __u64 wanted = cfg->inode;
+    if (leader)
+        task = BPF_CORE_READ(task, group_leader);
+    struct pid *pid = BPF_CORE_READ(task, thread_pid);
+    if (!pid)
+        return 0;
+    unsigned int level = BPF_CORE_READ(pid, level);
+    if (level > 32)
+        return 0;
+    for (int i = 0; i <= 32; ++i) {
+        if (i > level)
+            break;
+        struct upid up = {};
+        if (bpf_core_read(&up, sizeof(up), &pid->numbers[i]) < 0)
+            return 0;
+        if (up.ns && BPF_CORE_READ(up.ns, ns.inum) == wanted)
+            return up.nr;
+    }
+    return 0;
 }
 
-
-/*
- * 新增：学习 scheduler 视角下的 tracer TID。
- *
- * pid_tgid:
- *     bpf_get_current_pid_tgid() 的结果。
- *
- * sched_tid:
- *     sched_switch 中的 ctx->prev_pid。
- *
- *
- * 为什么只在 sched_switch 中调用？
- *
- * sched_switch 发生时，current 对应正在被切下 CPU 的 prev task。
- *
- * 因此：
- *
- * 如果 bpf_get_current_pid_tgid()
- * 能确认 current 属于 tracer，
- *
- * 那么：
- *
- *     ctx->prev_pid
- *
- * 就是 scheduler 视角下这个 tracer 线程真正使用的 TID。
- *
- *
- * 注意：
- *
- * 这里不能再使用
- *
- *     kylinrca_tid_from_pid_tgid(pid_tgid)
- *
- * 作为 cpu_ignored_tids 的 key。
- *
- * 因为我们建立这个 Map 的目的，
- * 正是为了处理用户态/BPF current ID
- * 与 sched tracepoint TID 可能不一致的问题。
- */
-static __always_inline void remember_tracer_sched_tid(
-    __u64 pid_tgid,
-    __u32 sched_tid)
+static __always_inline int ignored(__u32 pid, __u32 tid)
 {
-    __u8 value = 1;
-
-    /*
-     * 先利用和 syscall.bpf.c 相同的公共机制，
-     * 判断 current 是否属于 tracer 进程。
-     */
-    if (!kylinrca_should_skip_tracer(
-            &config_map,
-            pid_tgid))
-        return;
-
-    if (sched_tid == 0)
-        return;
-
-    /*
-     * 保存 scheduler 视角下的 tracer TID。
-     *
-     * 后续 sched_wakeup / sched_switch
-     * 都可以直接通过这个 TID 判断是否忽略。
-     */
-    bpf_map_update_elem(
-        &cpu_ignored_tids,
-        &sched_tid,
-        &value,
-        BPF_ANY);
-
-    /*
-     * 在第一次识别出 tracer TID 之前，
-     * 它有可能已经留下过：
-     *
-     * runnable_ts_map[tid]
-     * 或
-     * oncpu_start_map[tid]
-     *
-     * 这些状态已经属于 observer 自己，
-     * 必须立即清除，否则后续可能生成一条错误事件。
-     */
-    bpf_map_delete_elem(
-        &runnable_ts_map,
-        &sched_tid);
-
-    bpf_map_delete_elem(
-        &oncpu_start_map,
-        &sched_tid);
+    __u32 zero = 0;
+    __u32 *tracer = bpf_map_lookup_elem(&config_map, &zero);
+    return !pid || !tid || (tracer && pid == *tracer);
 }
 
-
-/*
- * 新增：判断某个 sched tracepoint TID
- * 是否应该被 CPU Probe 忽略。
- */
-static __always_inline int cpu_should_ignore_tid(__u32 tid)
+static __always_inline void bad_timestamp(__u32 key, __u32 tid,
+                                          __u64 start, __u64 end)
 {
-    __u32 key = KYLINRCA_CONFIG_KEY;
-    __u32 *tracer_pid;
-
-    /*
-     * idle task 不需要分析。
-     */
-    if (tid == 0)
-        return 1;
-
-    /*
-     * 第一层：
-     *
-     * 普通 Linux 环境下，
-     * sched TID 与用户态 tracer PID
-     * 可能本身就是相同的。
-     *
-     * 这种情况下无需等待动态学习，
-     * 可以直接过滤。
-     */
-    tracer_pid = bpf_map_lookup_elem(
-        &config_map,
-        &key);
-
-    if (tracer_pid &&
-        tid == *tracer_pid)
-        return 1;
-
-    /*
-     * 第二层：
-     *
-     * 对于 WSL / namespace 等环境，
-     * 查询我们在 sched_switch 中动态学习到的
-     * scheduler-visible tracer TID。
-     */
-    return bpf_map_lookup_elem(
-        &cpu_ignored_tids,
-        &tid) != 0;
+    __u64 *count = bpf_map_lookup_elem(&cpu_stats, &key);
+    if (count && ++(*count) <= 5)
+        bpf_printk("CPU_BAD tid=%u start=%llu end=%llu", tid, start, end);
 }
 
-
-/*
- * 向用户态发送一个 CPU 调度事件。
- */
-static __always_inline void emit_cpu_event(
-    __u32 tid,
-    __u32 kind,
-    __u64 runqueue_delay_ns,
-    __u64 on_cpu_time_ns,
-    __u64 timestamp_ns)
+static __always_inline void emit_cpu_event(__u32 pid, __u32 tid, __u32 kind,
+                                           __u64 duration, __u64 now)
 {
-    struct cpu_event *event;
-
-    event = bpf_ringbuf_reserve(
-        &events,
-        sizeof(*event),
-        0);
-
+    struct cpu_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
-        inc_cpu_stat(
-            CPU_STAT_RINGBUF_DROP);
+        inc_cpu_stat(CPU_STAT_RINGBUF_DROP);
         return;
     }
-
-    event->header.version =
-        KYLINRCA_EVENT_VERSION;
-
-    event->header.type =
-        EVENT_TYPE_CPU;
-
-    event->header.size =
-        sizeof(*event);
-
-    event->header.timestamp_ns =
-        timestamp_ns;
-
-    /*
-     * 当前 sched tracepoint
-     * 可以直接稳定获得的是 TID。
-     *
-     * TGID/PID 后续再补。
-     */
-    event->header.pid = 0;
+    __builtin_memset(event, 0, sizeof(*event));
+    event->header.version = KYLINRCA_EVENT_VERSION;
+    event->header.type = EVENT_TYPE_CPU;
+    event->header.size = sizeof(*event);
+    event->header.timestamp_ns = now;
+    event->header.pid = pid;
     event->header.tid = tid;
-
     event->kind = kind;
-    event->reserved = 0;
+    if (kind == CPU_EVENT_RUNQUEUE_DELAY)
+        event->runqueue_delay_ns = duration;
+    else
+        event->on_cpu_time_ns = duration;
+    __u32 zero = 0;
+    __u64 *seq = bpf_map_lookup_elem(&ringbuf_submit_seq, &zero);
+    __u64 flags = BPF_RB_NO_WAKEUP;
+    if (seq && ((++(*seq) & 63) == 0))
+        flags = BPF_RB_FORCE_WAKEUP;
+    bpf_ringbuf_submit(event, flags);
+}
 
-    event->runqueue_delay_ns =
-        runqueue_delay_ns;
-
-    event->on_cpu_time_ns =
-        on_cpu_time_ns;
-
-    /*
-     * sched_switch is a high-frequency tracepoint. Default adaptive wakeups
-     * can wake the userspace poller for each submission; scheduling that
-     * poller then creates more scheduler events and an observer feedback loop.
-     *
-     * The userspace poll has a 100 ms timeout, so suppress per-event wakeups
-     * and let it consume events in batches. No sampling is introduced and the
-     * event/statistics semantics stay unchanged.
-     */
-    __u32 seq_key = 0;
-    __u64 *seq = bpf_map_lookup_elem(
-        &ringbuf_submit_seq, &seq_key);
-    __u64 submit_flags = BPF_RB_NO_WAKEUP;
-
-    if (seq) {
-        (*seq)++;
-        if (((*seq) & 63) == 0)
-            submit_flags = BPF_RB_FORCE_WAKEUP; //存满 64 条 events 就 WAKEUP
-    } else {
-        submit_flags = 0;
+/* 每个线程的运行累计值独立于 RingBuffer，事件丢失不再丢失运行总量。 */
+static __always_inline void runtime_switch(__u32 kernel_tid, __u32 pid, __u32 tid, __u64 birth,
+                                           __u64 now, int entering)
+{
+    struct task_identity identity = {.tid = tid, .pid = pid, .birth_ns = birth};
+    if (bpf_map_update_elem(&task_ids, &kernel_tid, &identity, BPF_ANY) < 0)
+        inc_cpu_stat(CPU_STAT_ONCPU_UPDATE_FAIL);
+    struct cpu_runtime_value local = {};
+    struct cpu_runtime_value *old = bpf_map_lookup_elem(&runtime_map, &tid);
+    if (old)
+        local = *old;
+    if (local.birth_ns != birth || local.pid != pid) {
+        local.pid = pid;
+        local.birth_ns = birth;
+        local.completed_ns = 0;
+        local.running_since_ns = 0;
     }
-
-    bpf_ringbuf_submit(event, submit_flags);
+    if (entering) {
+        local.running_since_ns = now;
+    } else if (local.running_since_ns) {
+        if (now >= local.running_since_ns)
+            local.completed_ns += now - local.running_since_ns;
+        else
+            bad_timestamp(CPU_STAT_BAD_ONCPU_TIMESTAMP, tid,
+                          local.running_since_ns, now);
+        local.running_since_ns = 0;
+    }
+    /*
+     * 同一任务的切入/切出由调度路径串行化；用 Hash 整项替换发布快照。
+     * tracing 程序不能使用 bpf_spin_lock，因此不采用原地写入加锁。
+     */
+    if (bpf_map_update_elem(&runtime_map, &tid, &local, BPF_ANY) < 0)
+        inc_cpu_stat(CPU_STAT_ONCPU_UPDATE_FAIL);
 }
 
-
-/*
- * 已存在的线程从 sleeping 等状态
- * 被唤醒进入 runnable 状态。
- */
-SEC("tracepoint/sched/sched_wakeup")
-int handle_sched_wakeup(
-    struct trace_event_raw_sched_wakeup_template *ctx)
+static __always_inline int wakeup(struct task_struct *task)
 {
-    __u32 tid;
-    __u64 now;
-
-    int ret;
-
-    /*
-     * ctx->pid 是“被唤醒线程”的 TID。
-     */
-    tid = (__u32)ctx->pid;
-
-    /*
-     * 新增：
-     *
-     * 如果被唤醒的是 tracer 自己，
-     * 不为它记录 runnable timestamp。
-     */
-    if (cpu_should_ignore_tid(tid))
+    __u32 tid = visible_id(task, 0);
+    __u32 pid = visible_id(task, 1);
+    if (ignored(pid, tid))
         return 0;
-
-    now = bpf_ktime_get_ns();
-
-    ret = bpf_map_update_elem(
-        &runnable_ts_map,
-        &tid,
-        &now,
-        BPF_ANY);
-
-    if (ret < 0)
-        inc_cpu_stat(
-            CPU_STAT_WAKEUP_UPDATE_FAIL);
-
+    __u32 key = BPF_CORE_READ(task, pid);
+    struct timestamp_value stamp = {
+        .birth_ns = BPF_CORE_READ(task, start_boottime),
+        .time_ns = bpf_ktime_get_ns(),
+    };
+    if (bpf_map_update_elem(&runnable_ts_map, &key, &stamp, BPF_ANY) < 0)
+        inc_cpu_stat(CPU_STAT_WAKEUP_UPDATE_FAIL);
     return 0;
 }
 
-
-/*
- * 新创建线程第一次进入 runnable 状态。
- */
-SEC("tracepoint/sched/sched_wakeup_new")
-int handle_sched_wakeup_new(
-    struct trace_event_raw_sched_wakeup_template *ctx)
+/* 两条 wakeup 路径都拿 task_struct，彻底统一内部 key 与可见 ID 的转换。 */
+SEC("raw_tracepoint/sched_wakeup")
+int handle_sched_wakeup(struct bpf_raw_tracepoint_args *ctx)
 {
-    __u32 tid;
-    __u64 now;
-
-    int ret;
-
-    tid = (__u32)ctx->pid;
-
-    /*
-     * 与 sched_wakeup 相同：
-     *
-     * 已经确认属于 tracer 的线程
-     * 不记录 runnable timestamp。
-     */
-    if (cpu_should_ignore_tid(tid))
-        return 0;
-
-    now = bpf_ktime_get_ns();
-
-    ret = bpf_map_update_elem(
-        &runnable_ts_map,
-        &tid,
-        &now,
-        BPF_ANY);
-
-    if (ret < 0)
-        inc_cpu_stat(
-            CPU_STAT_WAKEUP_UPDATE_FAIL);
-
-    return 0;
+    return wakeup((struct task_struct *)ctx->args[0]);
+}
+SEC("raw_tracepoint/sched_wakeup_new")
+int handle_sched_wakeup_new(struct bpf_raw_tracepoint_args *ctx)
+{
+    return wakeup((struct task_struct *)ctx->args[0]);
 }
 
-
-/*
- * CPU 调度切换：
- *
- * prev task
- *      ↓ switch out
- *
- * next task
- *      ↓ switch in
- *
- *
- * 一次 sched_switch 同时描述两个线程，
- * 所以不能像 syscall 一样：
- *
- *     tracer -> return 0
- *
- * 否则如果：
- *
- *     prev = tracer
- *     next = 普通线程
- *
- * 会连普通线程的 switch-in 信息也一起丢掉。
- *
- * 因此这里必须分别判断：
- *
- *     ignore_prev
- *     ignore_next
- */
-SEC("tracepoint/sched/sched_switch")
-int handle_sched_switch(
-    struct trace_event_raw_sched_switch *ctx)
+SEC("raw_tracepoint/sched_switch")
+int handle_sched_switch(struct bpf_raw_tracepoint_args *ctx)
 {
-    __u32 next_tid;
-    __u32 prev_tid;
-
-    __u64 now;
-    __u64 pid_tgid;
-
-    int ignore_prev;
-    int ignore_next;
-
-    __u64 *oncpu_start;
-    __u64 on_cpu_time_ns;
-
-    __u64 *wakeup_ts;
-    __u64 runqueue_delay_ns;
-
-    int ret;
-
-
-    /*
-     * scheduler 视角下的两个线程 TID。
-     */
-    prev_tid =
-        (__u32)ctx->prev_pid;
-
-    next_tid =
-        (__u32)ctx->next_pid;
-
-
-    now = bpf_ktime_get_ns();
-
-
-    /*
-     * 新增：
-     *
-     * sched_switch tracepoint 执行时，
-     * current 对应正在被切下 CPU 的 prev task。
-     *
-     * 因此先检查 current：
-     *
-     * 如果 current 属于 tracer，
-     * 就把 ctx->prev_pid 记入 cpu_ignored_tids。
-     *
-     * 这样可以建立：
-     *
-     * 用户态 tracer 身份
-     *        ↓
-     * BPF current
-     *        ↓
-     * scheduler-visible TID
-     */
-    pid_tgid =
-        bpf_get_current_pid_tgid();
-
-    remember_tracer_sched_tid(
-        pid_tgid,
-        prev_tid);
-
-
-    /*
-     * 必须在 remember 之后判断。
-     *
-     * 因为当前这一条 sched_switch
-     * 本身可能就是 tracer 第一次被我们识别出来。
-     */
-    ignore_prev =
-        cpu_should_ignore_tid(
-            prev_tid);
-
-    ignore_next =
-        cpu_should_ignore_tid(
-            next_tid);
-
-
-    /*
-     * -------------------------------------------------
-     * 1. 处理被切下 CPU 的 prev task
-     * -------------------------------------------------
-     *
-     * 如果 prev 不是 tracer，
-     * 才计算它刚才在 CPU 上运行了多久。
-     */
-    if (prev_tid != 0 &&
-        !ignore_prev) {
-
-        oncpu_start =
-            bpf_map_lookup_elem(
-                &oncpu_start_map,
-                &prev_tid);
-
-        if (oncpu_start) {
-
-            on_cpu_time_ns =
-                now - *oncpu_start;
-
-            emit_cpu_event(
-                prev_tid,
-                CPU_EVENT_ONCPU_TIME,
-                0,
-                on_cpu_time_ns,
-                now);
-
-            ret =
-                bpf_map_delete_elem(
-                    &oncpu_start_map,
-                    &prev_tid);
-
-            if (ret < 0)
-                inc_cpu_stat(
-                    CPU_STAT_DELETE_FAIL);
-
+    struct task_struct *prev = (struct task_struct *)ctx->args[1];
+    struct task_struct *next = (struct task_struct *)ctx->args[2];
+    __u32 pk = BPF_CORE_READ(prev, pid), nk = BPF_CORE_READ(next, pid);
+    __u32 pt = visible_id(prev, 0), pp = visible_id(prev, 1);
+    __u32 nt = visible_id(next, 0), np = visible_id(next, 1);
+    __u64 pb = BPF_CORE_READ(prev, start_boottime);
+    __u64 nb = BPF_CORE_READ(next, start_boottime);
+    /* 同一次切换的起止边界一致；不将不同线程的处理耗时算成运行时间。 */
+    __u64 now = bpf_ktime_get_ns();
+    if (!ignored(pp, pt)) {
+        struct timestamp_value *found = bpf_map_lookup_elem(&oncpu_start_map, &pk);
+        if (found) {
+            struct timestamp_value start = *found;
+            if (start.birth_ns == pb) {
+                if (now >= start.time_ns)
+                    emit_cpu_event(pp, pt, CPU_EVENT_ONCPU_TIME, now - start.time_ns, now);
+                else
+                    bad_timestamp(CPU_STAT_BAD_ONCPU_TIMESTAMP, pt, start.time_ns, now);
+            }
+            bpf_map_delete_elem(&oncpu_start_map, &pk);
         } else {
-
-            /*
-             * 不一定是真正的程序错误。
-             *
-             * 例如 Probe 刚 attach 时，
-             * 当前线程已经在 CPU 上运行，
-             * 我们没有看到它之前的 switch-in。
-             */
-            inc_cpu_stat(
-                CPU_STAT_ONCPU_MISS);
+            inc_cpu_stat(CPU_STAT_ONCPU_MISS);
+        }
+        runtime_switch(pk, pp, pt, pb, now, 0);
+        /* raw tracepoint 的 preempt 参数单独处理，不依赖格式化 prev_state 的位掩码。 */
+        if (ctx->args[0] || ctx->args[3] == 0) {
+            struct timestamp_value stamp = {.time_ns = now, .birth_ns = pb};
+            if (bpf_map_update_elem(&runnable_ts_map, &pk, &stamp, BPF_ANY) < 0)
+                inc_cpu_stat(CPU_STAT_REQUEUE_UPDATE_FAIL);
         }
     }
-
-
-    /*
-     * 如果 prev 被切下 CPU 后仍然 runnable，
-     * 说明它是被抢占，而不是主动睡眠。
-     *
-     * 从 now 开始重新计算下一段 runqueue delay。
-     *
-     * tracer 自己不能进入 runnable_ts_map，
-     * 否则会重新形成自观测反馈。
-     */
-    if (prev_tid != 0 &&
-        !ignore_prev &&
-        prev_is_runnable(
-            ctx->prev_state)) {
-
-        ret =
-            bpf_map_update_elem(
-                &runnable_ts_map,
-                &prev_tid,
-                &now,
-                BPF_ANY);
-
-        if (ret < 0)
-            inc_cpu_stat(
-                CPU_STAT_REQUEUE_UPDATE_FAIL);
-    }
-
-
-    /*
-     * -------------------------------------------------
-     * 2. 处理即将被调度上 CPU 的 next task
-     * -------------------------------------------------
-     *
-     * 如果 next 不是 tracer：
-     *
-     * 1. 计算 runqueue delay
-     * 2. 记录新的 on-CPU 起点
-     */
-    if (next_tid != 0 &&
-        !ignore_next) {
-
-        wakeup_ts =
-            bpf_map_lookup_elem(
-                &runnable_ts_map,
-                &next_tid);
-
-        if (wakeup_ts) {
-
-            runqueue_delay_ns =
-                now - *wakeup_ts;
-
-            emit_cpu_event(
-                next_tid,
-                CPU_EVENT_RUNQUEUE_DELAY,
-                runqueue_delay_ns,
-                0,
-                now);
-
-            ret =
-                bpf_map_delete_elem(
-                    &runnable_ts_map,
-                    &next_tid);
-
-            if (ret < 0)
-                inc_cpu_stat(
-                    CPU_STAT_DELETE_FAIL);
-
+    if (!ignored(np, nt)) {
+        struct timestamp_value *found = bpf_map_lookup_elem(&runnable_ts_map, &nk);
+        if (found) {
+            struct timestamp_value start = *found;
+            if (start.birth_ns == nb) {
+                /*
+                 * 先固定 Map 快照，再读取计算终点。
+                 * 远端 CPU 的唤醒写入可能晚于本函数入口的 now；提前取时
+                 * 会产生几十 ns 的负值。只调整排队测量终点，不改变调度
+                 * 运行片段的共同边界 now，也不把负值截断为零。
+                 */
+                __u64 measured_end = bpf_ktime_get_ns();
+                if (measured_end >= start.time_ns)
+                    emit_cpu_event(np, nt, CPU_EVENT_RUNQUEUE_DELAY,
+                                   measured_end - start.time_ns, measured_end);
+                else
+                    bad_timestamp(CPU_STAT_BAD_RUNQUEUE_TIMESTAMP, nt,
+                                  start.time_ns, measured_end);
+            }
+            bpf_map_delete_elem(&runnable_ts_map, &nk);
         } else {
-
-            /*
-             * 常见原因包括：
-             *
-             * Probe attach 时线程已经 runnable，
-             * 或前面的 wakeup 没有被捕获。
-             */
-            inc_cpu_stat(
-                CPU_STAT_WAKEUP_MISS);
+            inc_cpu_stat(CPU_STAT_WAKEUP_MISS);
         }
-
-
-        /*
-         * 记录这个线程真正开始使用 CPU 的时间。
-         */
-        ret =
-            bpf_map_update_elem(
-                &oncpu_start_map,
-                &next_tid,
-                &now,
-                BPF_ANY);
-
-        if (ret < 0)
-            inc_cpu_stat(
-                CPU_STAT_ONCPU_UPDATE_FAIL);
+        struct timestamp_value stamp = {.time_ns = now, .birth_ns = nb};
+        if (bpf_map_update_elem(&oncpu_start_map, &nk, &stamp, BPF_ANY) < 0)
+            inc_cpu_stat(CPU_STAT_ONCPU_UPDATE_FAIL);
+        runtime_switch(nk, np, nt, nb, now, 1);
     }
-
-
-    /*
-     * 新增：保险清理。
-     *
-     * 如果某个 TID 已确认属于 tracer，
-     * 保证两个状态 Map 中都不存在它。
-     *
-     * remember_tracer_sched_tid() 已经会在首次学习时清理，
-     * 这里再次清理是为了保证后续不会因为历史状态
-     * 意外产生 tracer 的 CPU event。
-     */
-    if (ignore_prev) {
-
-        bpf_map_delete_elem(
-            &oncpu_start_map,
-            &prev_tid);
-
-        bpf_map_delete_elem(
-            &runnable_ts_map,
-            &prev_tid);
-    }
-
-    if (ignore_next) {
-
-        bpf_map_delete_elem(
-            &oncpu_start_map,
-            &next_tid);
-
-        bpf_map_delete_elem(
-            &runnable_ts_map,
-            &next_tid);
-    }
-
-
     return 0;
 }
 
-
+/* 任务释放时清理；exit 事件早于最后一次 switch-out，不能在 exit 时提前删除。 */
+SEC("raw_tracepoint/sched_process_free")
+int handle_sched_free(struct bpf_raw_tracepoint_args *ctx)
+{
+    struct task_struct *task = (struct task_struct *)ctx->args[0];
+    __u32 key = BPF_CORE_READ(task, pid);
+    __u64 birth = BPF_CORE_READ(task, start_boottime);
+    struct timestamp_value *stamp = bpf_map_lookup_elem(&runnable_ts_map, &key);
+    if (stamp && stamp->birth_ns == birth)
+        bpf_map_delete_elem(&runnable_ts_map, &key);
+    stamp = bpf_map_lookup_elem(&oncpu_start_map, &key);
+    if (stamp && stamp->birth_ns == birth)
+        bpf_map_delete_elem(&oncpu_start_map, &key);
+    struct task_identity *found = bpf_map_lookup_elem(&task_ids, &key);
+    if (found) {
+        struct task_identity id = *found;
+        if (id.birth_ns == birth) {
+            struct cpu_runtime_value *runtime = bpf_map_lookup_elem(&runtime_map, &id.tid);
+            if (runtime && runtime->birth_ns == birth)
+                bpf_map_delete_elem(&runtime_map, &id.tid);
+            bpf_map_delete_elem(&task_ids, &key);
+        }
+    }
+    return 0;
+}
 char LICENSE[] SEC("license") = "GPL";

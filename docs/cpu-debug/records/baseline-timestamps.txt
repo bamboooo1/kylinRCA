@@ -1,0 +1,15 @@
+   stress-ng-cpu-9853    [007] d..4. 28789.470777: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28789418923898 end=28789418923888 check=28789418924550
+   stress-ng-cpu-9853    [007] d..4. 28789.476982: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28789426274389 end=28789426274341 check=28789426274791
+   stress-ng-cpu-9853    [007] d..4. 28789.526062: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28789475370221 end=28789475370173 check=28789475370634
+   stress-ng-cpu-9853    [007] d..4. 28789.530595: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28789479902914 end=28789479902623 check=28789479903204
+   stress-ng-cpu-9853    [007] d..4. 28789.531812: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28789481121463 end=28789481121183 check=28789481121594
+   stress-ng-cpu-9847    [005] d..4. 28790.263304: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28790212508907 end=28790212508666 check=28790212509578
+   stress-ng-cpu-9847    [005] d..4. 28792.871516: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28792820821872 end=28792820821781 check=28792820822162
+   stress-ng-cpu-9847    [005] d..4. 28792.871533: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28792820843412 end=28792820843332 check=28792820843722
+   stress-ng-cpu-9847    [005] d..4. 28792.871543: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28792820853200 end=28792820853140 check=28792820853531
+   stress-ng-cpu-9847    [005] d..4. 28792.879844: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28792829150193 end=28792829150123 check=28792829150734
+   stress-ng-cpu-9849    [000] d..4. 28794.122198: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28794071503240 end=28794071503221 check=28794071503622
+   stress-ng-cpu-9849    [000] d..4. 28796.621980: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28796571201026 end=28796571200936 check=28796571201386
+   stress-ng-cpu-9849    [000] d..4. 28796.623838: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28796573142411 end=28796573142342 check=28796573142893
+   stress-ng-cpu-9849    [000] d..4. 28796.623924: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28796573232569 end=28796573232520 check=28796573232971
+   stress-ng-cpu-9849    [000] d..4. 28796.629166: bpf_trace_printk: CPU_BAD key=7 tid=162 ktid=162 start=28796578470425 end=28796578470326 check=28796578470847

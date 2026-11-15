@@ -1,0 +1,3 @@
+   stress-ng-cpu-13956   [000] d..4. 30274.424680: bpf_trace_printk: CPU_BAD tid=1212 start=30274373242772 end=30274373242742
+   stress-ng-cpu-13956   [000] d..4. 30274.442018: bpf_trace_printk: CPU_BAD tid=1179 start=30274390666866 end=30274390666836
+   stress-ng-cpu-13956   [000] d..4. 30274.443579: bpf_trace_printk: CPU_BAD tid=1180 start=30274392229727 end=30274392229657
