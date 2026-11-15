@@ -1,3 +1,4 @@
+#include "cpu_bpf_config.h"
 #include <bpf/libbpf.h>
 
 #include <cerrno>
@@ -217,6 +218,12 @@ int main()
      * 自动 attach cpu.bpf.o 中所有
      * tracepoint program。
      */
+    if (!configure_cpu_namespace(obj)) {
+        std::cerr << "Cannot configure CPU PID namespace\n";
+        bpf_object__close(obj);
+        return 1;
+    }
+
     struct bpf_program* prog;
 
     bpf_object__for_each_program(prog, obj) {

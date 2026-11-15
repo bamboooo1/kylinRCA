@@ -1,0 +1,8 @@
+libbpf: prog 'handle_sched_switch': BPF program load failed: -EINVAL
+libbpf: prog 'handle_sched_switch': -- BEGIN PROG LOAD LOG --
+tracing progs cannot use bpf_spin_lock yet
+processed 0 insns (limit 1000000) max_states_per_insn 0 total_states 0 peak_states 0 mark_read 0
+-- END PROG LOAD LOG --
+libbpf: prog 'handle_sched_switch': failed to load: -EINVAL
+libbpf: failed to load object 'build/cpu.bpf.o'
+Failed to load CPU BPF object: -22

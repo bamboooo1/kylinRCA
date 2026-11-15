@@ -45,3 +45,18 @@ BUild:
 ```bash
 cmake --build build
 ```
+
+## CPU 链路修复与验证
+
+中文排查过程、原理、逐轮日志和学习日志模板见
+[CPU 调试学习记录](docs/cpu-debug/README.md) 与
+[实测结果](docs/cpu-debug/validation-results.md)。
+
+```bash
+ctest --test-dir build --output-on-failure
+sudo python3 scripts/check_cpu_pipeline.py --label full
+sudo python3 scripts/check_cpu_pipeline.py --label contention --oversubscribe
+```
+
+CPU 诊断新增 `runtime_valid`、`runtime_window_ns`、`runtime_uncertainty_ns`。
+运行时间来自独立 BPF 累计快照差分；缺失快照不等于线程没有运行。

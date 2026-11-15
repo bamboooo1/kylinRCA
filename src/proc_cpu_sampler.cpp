@@ -6,6 +6,7 @@
 #include <cctype>
 #include <filesystem>
 #include <system_error>
+#include <time.h>
 
 namespace {
 
@@ -93,6 +94,19 @@ bool read_thread_cpu_stat(
           >> sample.stime))
         return false;
 
+    /* 跳过第 16～21 字段，读取第 22 字段 starttime。 */
+    long long skipped = 0;
+    for (int field = 16; field <= 21; ++field) {
+        if (!(fields >> skipped))
+            return false;
+    }
+    if (!(fields >> sample.starttime_ticks))
+        return false;
+    timespec now {};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return false;
+    sample.sampled_at_ns = static_cast<uint64_t>(now.tv_sec) * 1000000000ULL
+                         + static_cast<uint64_t>(now.tv_nsec);
     return sample.tid == tid;
 }
 
@@ -249,7 +263,8 @@ bool read_process_cpu_stat(
 }
 
 bool read_all_thread_cpu_stats(
-    ThreadCpuStatMap& samples)
+    ThreadCpuStatMap& samples,
+    const ThreadSnapshotHook& hook)
 {
     samples.clear();
 
@@ -316,6 +331,8 @@ bool read_all_thread_cpu_stats(
                     pid,
                     tid,
                     sample)) {
+                if (hook)
+                    hook(sample); // 紧邻当前线程的 /proc 读取采集 BPF 快照，降低扫描偏差。
                 samples[
                     static_cast<std::uint32_t>(tid)] =
                     std::move(sample); //允许把 sample 里的资源移动进 map，而不是复制
@@ -463,9 +480,18 @@ bool calculate_thread_cpu_usage(
      */
     if (previous.pid != current.pid ||
         previous.tid != current.tid ||
+        previous.starttime_ticks != current.starttime_ticks ||
         elapsed_seconds <= 0.0 ||
         clock_ticks_per_second <= 0)
         return false;
+
+    /* 每个线程使用自己的读取间隔，不把整次扫描耗时分配给所有线程。 */
+    if (previous.sampled_at_ns && current.sampled_at_ns) {
+        if (current.sampled_at_ns <= previous.sampled_at_ns)
+            return false;
+        elapsed_seconds = static_cast<double>(current.sampled_at_ns -
+                                               previous.sampled_at_ns) / 1e9;
+    }
 
     const std::uint64_t previous_ticks =
         previous.utime + previous.stime;

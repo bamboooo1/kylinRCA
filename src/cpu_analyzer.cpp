@@ -138,7 +138,17 @@ void CpuAnalyzer::process(const cpu_event& event)
     /*
      * 同时更新当前 RCA 窗口。
      */
-    update_cpu_stats(window_stats_[tid], event);
+    if (event.header.timestamp_ns == 0) {
+        // 兼容使用合成事件的单元测试。
+        update_cpu_stats(window_stats_[tid], event);
+    } else {
+        // on-CPU 的实时窗口值来自快照，事件片段仅保留在生命周期统计中。
+        if (event.kind == CPU_EVENT_RUNQUEUE_DELAY)
+            pending_events_.push_back(event);
+        // 极端积压时限制内存，压力证据只作为辅助；累计统计仍保留。
+        if (pending_events_.size() > 100000)
+            pending_events_.pop_front();
+    }
 
     last_seen_[tid] = std::chrono::steady_clock::now();
 }
@@ -167,6 +177,17 @@ void CpuAnalyzer::process_usage(
      * 汇总自上一次有效 CPU 使用率采样以来收集到的
      * runqueue delay，作为本轮 RCA 的调度证据。
      */
+    if (observation.timestamp_ns) {
+        for (auto it = pending_events_.begin(); it != pending_events_.end();) {
+            if (it->header.timestamp_ns > observation.timestamp_ns) {
+                ++it;
+                continue;
+            }
+            if (it->header.timestamp_ns > observation.window_start_ns)
+                update_cpu_stats(window_stats_[it->header.tid], *it);
+            it = pending_events_.erase(it);
+        }
+    }
     update_runqueue_evidence();
 
     diagnosis_.pid =
@@ -183,196 +204,48 @@ void CpuAnalyzer::process_usage(
      */
     update_responsibility_evidence(observation);
 
-    /*
-     * 确定本轮样本对应的候选异常。
-     *
-     * RunqueuePressure 的证据更具体，因此优先级高于
-     * 普通 HighUsage。
-     */
-    CpuDiagnosisState candidate_state =
-        CpuDiagnosisState::Normal;
+    const bool system_high = observation.system_usage_percent >=
+                             config_.high_usage_threshold_percent;
+    const bool process_high = observation.processes.empty() && observation.pid > 0 &&
+                              observation.process_usage_percent >=
+                              config_.high_usage_threshold_percent;
+    const bool high = system_high || process_high;
+    const bool recovery = observation.system_usage_percent <
+                          config_.recovery_threshold_percent &&
+                          (observation.pid == 0 || observation.process_usage_percent <
+                           config_.recovery_threshold_percent);
 
-    const bool system_high =
-        observation.system_usage_percent >=
-        config_.high_usage_threshold_percent;
+    // 不同压力证据可以交替出现，但高占用这个事实独立持续计数。
+    abnormal_sample_count_ = high ? abnormal_sample_count_ + 1 : 0;
+    if (abnormal_sample_count_ >= config_.alert_consecutive_samples)
+        high_usage_active_ = true;
+    recovery_sample_count_ = recovery ? recovery_sample_count_ + 1 : 0;
+    if (recovery_sample_count_ >= config_.recovery_consecutive_samples)
+        high_usage_active_ = false;
 
-    const bool process_high =
-        observation.processes.empty() &&
-        observation.pid > 0 &&
-        observation.process_usage_percent >=
-        config_.high_usage_threshold_percent;
-
-    const bool runqueue_pressure =
-        system_high &&
-        diagnosis_.max_runqueue_delay_ns >=
-        config_.runqueue_delay_threshold_ns;
-
-    if (runqueue_pressure) {
-
-        candidate_state =
-            CpuDiagnosisState::RunqueuePressure;
-
-    } else if (
-        system_high ||
-        process_high) {
-
-        candidate_state =
-            CpuDiagnosisState::HighUsage;
-    }
-
-    /*
-     * 只有系统 CPU 和目标进程 CPU 都回落到恢复阈值以下，
-     * 才认为本轮样本满足恢复条件。
-     *
-     * pid == 0 表示没有指定目标进程，此时只判断系统使用率。
-     */
-    const bool recovery_sample =
-        observation.system_usage_percent <
-            config_.recovery_threshold_percent &&
-        (observation.pid == 0 ||
-         observation.process_usage_percent <
-            config_.recovery_threshold_percent);
-
-    if (diagnosis_.state ==
-        CpuDiagnosisState::Normal) {
-
-        /*
-         * 当前是 Normal：
-         *
-         * 连续出现相同异常类型达到配置次数后，才进入告警。
-         */
-        recovery_sample_count_ = 0;
-
-        if (candidate_state ==
-            CpuDiagnosisState::Normal) {
-
-            pending_abnormal_state_ =
-                CpuDiagnosisState::Normal;
-
-            abnormal_sample_count_ = 0;
-            diagnosis_.consecutive_samples = 0;
-
-        } else {
-
-            /*
-             * 候选异常类型发生变化时重新计数，避免把
-             * HighUsage 和 RunqueuePressure 混合累计。
-             */
-            if (pending_abnormal_state_ !=
-                candidate_state) {
-
-                pending_abnormal_state_ =
-                    candidate_state;
-
-                abnormal_sample_count_ = 1;
-
-            } else {
-
-                abnormal_sample_count_++;
-            }
-
-            diagnosis_.consecutive_samples =
-                abnormal_sample_count_;
-
-            if (abnormal_sample_count_ >=
-                config_.alert_consecutive_samples) {
-
-                diagnosis_.state =
-                    candidate_state;
-
-                pending_abnormal_state_ =
-                    CpuDiagnosisState::Normal;
-
-                abnormal_sample_count_ = 0;
-
-                diagnosis_.consecutive_samples = 0;
-            }
-        }
-
+    if (observation.scheduling_evidence_valid) {
+        const bool pressure = system_high && diagnosis_.max_runqueue_delay_ns >=
+                              config_.runqueue_delay_threshold_ns;
+        pressure_sample_count_ = pressure ? pressure_sample_count_ + 1 : 0;
+        pressure_recovery_count_ = pressure ? 0 : pressure_recovery_count_ + 1;
+        if (pressure_sample_count_ >= config_.alert_consecutive_samples)
+            pressure_active_ = true;
+        if (pressure_recovery_count_ >= config_.recovery_consecutive_samples)
+            pressure_active_ = false;
     } else {
-
-        /*
-         * 当前已经处于异常状态：
-         *
-         * 连续出现恢复样本后才回到 Normal。
-         */
-        if (recovery_sample) {
-
-            pending_abnormal_state_ =
-                CpuDiagnosisState::Normal;
-
-            abnormal_sample_count_ = 0;
-            recovery_sample_count_++;
-
-            diagnosis_.consecutive_samples =
-                recovery_sample_count_;
-
-            if (recovery_sample_count_ >=
-                config_.recovery_consecutive_samples) {
-
-                diagnosis_.state =
-                    CpuDiagnosisState::Normal;
-
-                recovery_sample_count_ = 0;
-                diagnosis_.consecutive_samples = 0;
-            }
-
-        } else {
-
-            recovery_sample_count_ = 0;
-
-            /*
-             * 已经处于一种异常，但当前连续观察到另一种异常时，
-             * 也要求达到连续样本数才切换异常类型。
-             */
-            if (candidate_state !=
-                    CpuDiagnosisState::Normal &&
-                candidate_state !=
-                    diagnosis_.state) {
-
-                if (pending_abnormal_state_ !=
-                    candidate_state) {
-
-                    pending_abnormal_state_ =
-                        candidate_state;
-
-                    abnormal_sample_count_ = 1;
-
-                } else {
-
-                    abnormal_sample_count_++;
-                }
-
-                diagnosis_.consecutive_samples =
-                    abnormal_sample_count_;
-
-                if (abnormal_sample_count_ >=
-                    config_.alert_consecutive_samples) {
-
-                    diagnosis_.state =
-                        candidate_state;
-
-                    pending_abnormal_state_ =
-                        CpuDiagnosisState::Normal;
-
-                    abnormal_sample_count_ = 0;
-                    diagnosis_.consecutive_samples = 0;
-                }
-
-            } else {
-
-                /*
-                 * 当前样本仍支持已有异常，或者处于迟滞区间。
-                 * 保持当前诊断状态，但不累计状态切换次数。
-                 */
-                pending_abnormal_state_ =
-                    CpuDiagnosisState::Normal;
-
-                abnormal_sample_count_ = 0;
-                diagnosis_.consecutive_samples = 0;
-            }
-        }
+        // 缺失证据不等于正常；中断连续样本，并取消过期的压力结论。
+        pressure_sample_count_ = 0;
+        pressure_recovery_count_ = 0;
+        pressure_active_ = false;
     }
+    diagnosis_.state = pressure_active_ ? CpuDiagnosisState::RunqueuePressure :
+                       high_usage_active_ ? CpuDiagnosisState::HighUsage :
+                                            CpuDiagnosisState::Normal;
+    diagnosis_.consecutive_samples = 0;
+    if (diagnosis_.state == CpuDiagnosisState::Normal && high)
+        diagnosis_.consecutive_samples = abnormal_sample_count_;
+    else if (diagnosis_.state != CpuDiagnosisState::Normal && recovery)
+        diagnosis_.consecutive_samples = recovery_sample_count_;
 
     /*
      * 当前窗口已经完成诊断。
@@ -416,7 +289,11 @@ void CpuAnalyzer::reset()
 
     diagnosis_ = CpuDiagnosis{};
 
-    pending_abnormal_state_ = CpuDiagnosisState::Normal;
+    high_usage_active_ = false;
+    pressure_active_ = false;
+    pressure_sample_count_ = 0;
+    pressure_recovery_count_ = 0;
+    pending_events_.clear();
 
     abnormal_sample_count_ = 0;
     recovery_sample_count_ = 0;
@@ -513,6 +390,9 @@ void CpuAnalyzer::update_responsibility_evidence(
     diagnosis_.culprit_thread_comm.clear();
     diagnosis_.culprit_thread_usage_percent = 0.0;
     diagnosis_.culprit_oncpu_time_ns = 0;
+    diagnosis_.culprit_runtime_valid = false;
+    diagnosis_.culprit_runtime_window_ns = 0;
+    diagnosis_.culprit_runtime_uncertainty_ns = 0;
     diagnosis_.culprit_runqueue_delay_ns = 0;
 
     diagnosis_.victim_pid = 0;
@@ -580,6 +460,12 @@ void CpuAnalyzer::update_responsibility_evidence(
                     culprit_thread->comm;
                 diagnosis_.culprit_thread_usage_percent =
                     culprit_thread->usage_percent;
+                if (observation.has_runtime_snapshots) {
+                    diagnosis_.culprit_runtime_valid = culprit_thread->runtime_valid;
+                    diagnosis_.culprit_oncpu_time_ns = culprit_thread->runtime_ns;
+                    diagnosis_.culprit_runtime_window_ns = culprit_thread->runtime_window_ns;
+                    diagnosis_.culprit_runtime_uncertainty_ns = culprit_thread->runtime_uncertainty_ns;
+                }
             }
 
             /*
@@ -600,8 +486,10 @@ void CpuAnalyzer::update_responsibility_evidence(
             diagnosis_.culprit_tid);
 
     if (culprit_stat != window_stats_.end()) {
-        diagnosis_.culprit_oncpu_time_ns =
-            culprit_stat->second.total_oncpu_time_ns;
+        // 快照模式禁止被“本轮收到的完整片段”覆盖，否则会再次跨窗口累计。
+        if (!observation.has_runtime_snapshots)
+            diagnosis_.culprit_oncpu_time_ns =
+                culprit_stat->second.total_oncpu_time_ns;
         diagnosis_.culprit_runqueue_delay_ns =
             culprit_stat->second.
                 total_runqueue_delay_ns;

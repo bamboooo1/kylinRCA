@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <deque>
 
 struct CpuStats {
     /*
@@ -60,6 +61,10 @@ struct CpuThreadUsageObservation {
     uint32_t tid = 0;
     std::string comm;
     double usage_percent = 0.0;
+    bool runtime_valid = false;
+    uint64_t runtime_ns = 0;
+    uint64_t runtime_window_ns = 0;
+    uint64_t runtime_uncertainty_ns = 0;
 };
 
 /*
@@ -107,6 +112,10 @@ struct CpuUsageObservation {
      * 为空时仍按原来的指定 PID 模式处理，保持现有调用方兼容。
      */
     std::vector<CpuProcessUsageObservation> processes;
+    /* 真正运行时采用累计快照；合成单测仍可验证原始事件聚合。 */
+    bool has_runtime_snapshots = false;
+    uint64_t window_start_ns = 0;
+    bool scheduling_evidence_valid = true;
 };
 
 
@@ -188,6 +197,9 @@ struct CpuDiagnosis {
      * 责任线程在当前 BPF 窗口中的调度证据。
      */
     uint64_t culprit_oncpu_time_ns = 0;
+    bool culprit_runtime_valid = false;
+    uint64_t culprit_runtime_window_ns = 0;
+    uint64_t culprit_runtime_uncertainty_ns = 0;
     uint64_t culprit_runqueue_delay_ns = 0;
 
     /*
@@ -271,6 +283,8 @@ private:
      * 用于本轮 RCA 判断。
      */
     std::unordered_map<uint32_t, CpuStats> window_stats_;
+    /* 按事件时间归窗；延迟到达的旧事件不能污染新窗口。 */
+    std::deque<cpu_event> pending_events_;
 
     /*
      * 记录每个 TID 最后一次收到 CPU 调度事件的用户态时间。
@@ -279,16 +293,13 @@ private:
 
     CpuDiagnosis diagnosis_;
 
-    /*
-    * 当前正在累计的候选异常。
-    *
-    * 如果异常类型发生变化，连续计数必须重新开始，避免把
-    * HighUsage 和 RunqueuePressure 混合计算成连续异常。
-     */
-    CpuDiagnosisState pending_abnormal_state_ = CpuDiagnosisState::Normal;
-
+    // 高占用和压力分别累计，压力类型变化不能重置持续高占用。
+    bool high_usage_active_ = false;
+    bool pressure_active_ = false;
     std::size_t abnormal_sample_count_ = 0;
     std::size_t recovery_sample_count_ = 0;
+    std::size_t pressure_sample_count_ = 0;
+    std::size_t pressure_recovery_count_ = 0;
 };
 
 #endif

@@ -96,6 +96,8 @@ add_custom_command(
     DEPENDS
         ${CPU_BPF_SOURCE}
         ${CMAKE_CURRENT_SOURCE_DIR}/include/event.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/cpu_probe_stats.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/cpu_runtime.h
         ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/bpf_common.h
         ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/vmlinux.h
 
@@ -239,3 +241,13 @@ target_include_directories(
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# 非特权回归纳入 CTest；真实 BPF/压力测试通过 scripts/check_cpu_pipeline.py 执行。
+add_executable(kylinrca_cpu_runtime_smoke
+    tests/cpu_runtime_smoke.cpp src/cpu_analyzer.cpp src/proc_cpu_sampler.cpp)
+target_include_directories(kylinrca_cpu_runtime_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_cpu_runtime_smoke PRIVATE PkgConfig::LIBBPF)
+enable_testing()
+add_test(NAME cpu_analyzer COMMAND kylinrca_cpu_analyzer_smoke)
+add_test(NAME cpu_runtime_window COMMAND kylinrca_cpu_runtime_smoke)
+add_test(NAME json_reporter COMMAND kylinrca_json_reporter_smoke)

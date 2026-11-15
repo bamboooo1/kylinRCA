@@ -1,7 +1,10 @@
+#include "cpu_runtime_sampler.h"
+#include "cpu_bpf_config.h"
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
 #include "cpu_analyzer.h"
+#include "cpu_probe_stats.h"
 #include "event.h"
 #include "proc_cpu_sampler.h"
 
@@ -203,9 +206,10 @@ build_process_observations(
          * current_thread.pid 是线程组 ID（TGID），同一进程内所有
          * 线程拥有相同 PID，但各自的 TID 不同。
          */
-        const uint32_t pid =
-            static_cast<uint32_t>(
-                current_thread.pid); //获取线程所属进程PID
+        const uint32_t pid = static_cast<uint32_t>(current_thread.pid);
+        // tracer 自身已在 BPF 侧过滤，也不应出现在 /proc 热点排名中。
+        if (pid == static_cast<uint32_t>(getpid()))
+            continue; //获取线程所属进程PID
 
         /* 
          *第一次遇到某个 PID 时，
@@ -263,6 +267,11 @@ build_process_observations(
                 current_thread.tid);
         thread.comm = current_thread.comm;
         thread.usage_percent = thread_usage;
+        thread.runtime_valid = calculate_runtime_delta(
+            previous_it->second, current_thread,
+            thread.runtime_ns, thread.runtime_window_ns);
+        thread.runtime_uncertainty_ns = previous_it->second.bpf_uncertainty_ns
+                                      + current_thread.bpf_uncertainty_ns;
 
         // 把线程明细放进它所属进程的 threads 列表。
         process.threads.push_back(
@@ -317,6 +326,85 @@ void destroy_links(
         bpf_link__destroy(link);
 
     links.clear();
+}
+
+/* 将丢事件、非法时间与 Map 写入失败转为本轮压力证据的质量标记。 */
+bool read_cpu_probe_errors(bpf_object* object, uint64_t& total)
+{
+    bpf_map* map = bpf_object__find_map_by_name(object, "cpu_stats");
+    const int cpus = libbpf_num_possible_cpus();
+    if (!map || cpus <= 0)
+        return false;
+    const uint32_t keys[] = {CPU_STAT_RINGBUF_DROP, CPU_STAT_BAD_RUNQUEUE_TIMESTAMP,
+        CPU_STAT_BAD_ONCPU_TIMESTAMP, CPU_STAT_WAKEUP_UPDATE_FAIL,
+        CPU_STAT_ONCPU_UPDATE_FAIL, CPU_STAT_REQUEUE_UPDATE_FAIL};
+    std::vector<uint64_t> values(cpus);
+    total = 0;
+    for (const uint32_t key : keys) {
+        if (bpf_map_lookup_elem(bpf_map__fd(map), &key, values.data()) != 0)
+            return false;
+        for (uint64_t value : values)
+            total += value;
+    }
+    return true;
+}
+
+/*
+ * PERCPU_ARRAY 的每个 key 在每个 possible CPU 上都有一个 64 位值。
+ * 必须一次提供全部 CPU 的空间；只传一个整数会导致缓冲区越界。
+ * 在 detach 后读取，避免汇总期间探针继续更新，随后再关闭 object。
+ */
+bool print_cpu_probe_stats(bpf_object* object)
+{
+    bpf_map* map = bpf_object__find_map_by_name(object, "cpu_stats");
+    const int cpu_count = libbpf_num_possible_cpus();
+    if (map == nullptr || cpu_count <= 0) {
+        std::cerr << "Cannot access CPU probe statistics\n";
+        return false;
+    }
+
+    struct StatName {
+        uint32_t key;
+        const char* name;
+    };
+    /* 显式使用共享枚举，不依赖字符串数组下标推断计数器编号。 */
+    const StatName names[] = {
+        {CPU_STAT_WAKEUP_UPDATE_FAIL, "wakeup_update_fail"},
+        {CPU_STAT_WAKEUP_MISS, "wakeup_miss"},
+        {CPU_STAT_ONCPU_UPDATE_FAIL, "oncpu_update_fail"},
+        {CPU_STAT_ONCPU_MISS, "oncpu_miss"},
+        {CPU_STAT_REQUEUE_UPDATE_FAIL, "requeue_update_fail"},
+        {CPU_STAT_RINGBUF_DROP, "ringbuf_drop"},
+        {CPU_STAT_DELETE_FAIL, "delete_fail"},
+        {CPU_STAT_BAD_RUNQUEUE_TIMESTAMP, "bad_runqueue_timestamp"},
+        {CPU_STAT_BAD_ONCPU_TIMESTAMP, "bad_oncpu_timestamp"},
+    };
+    static_assert(sizeof(names) / sizeof(names[0]) == CPU_STAT_MAX,
+                  "Every CPU statistic needs a printable name");
+
+    if (bpf_map__max_entries(map) != CPU_STAT_MAX ||
+        bpf_map__value_size(map) != sizeof(uint64_t) ||
+        bpf_map__type(map) != BPF_MAP_TYPE_PERCPU_ARRAY) {
+        std::cerr << "CPU statistics map definition mismatch\n";
+        return false;
+    }
+
+    std::vector<uint64_t> values(cpu_count);
+    bool success = true;
+    for (const StatName& stat : names) {
+        if (bpf_map_lookup_elem(bpf_map__fd(map), &stat.key,
+                                values.data()) != 0) {
+            std::cerr << "Cannot read CPU statistic " << stat.name
+                      << ": " << std::strerror(errno) << '\n';
+            success = false;
+            continue;
+        }
+        uint64_t total = 0;
+        for (uint64_t value : values)
+            total += value;
+        std::cout << "[CPU PROBE] " << stat.name << '=' << total << '\n';
+    }
+    return success;
 }
 
 } // namespace
@@ -481,6 +569,12 @@ int main(
      * 一个 cpu.bpf.o 中包含多个程序（wakeup、wakeup_new、switch）。
      * links 保存每次 attach 的结果，确保观测期间挂载关系一直存活。
      */
+    if (!configure_cpu_namespace(object)) {
+        std::cerr << "Cannot configure CPU PID namespace\n";
+        bpf_object__close(object);
+        return 1;
+    }
+
     std::vector<bpf_link*> links;
     bpf_program* program = nullptr;
 
@@ -533,6 +627,32 @@ int main(
         return 1;
     }
 
+    bpf_map* runtime_map = bpf_object__find_map_by_name(object, "runtime_map");
+    const int runtime_fd = runtime_map ? bpf_map__fd(runtime_map) : -1;
+    if (runtime_fd < 0) {
+        ring_buffer__free(ring);
+        destroy_links(links);
+        bpf_object__close(object);
+        return 1;
+    }
+    const ThreadSnapshotHook runtime_hook = [runtime_fd](ThreadCpuStatSample& sample) {
+        read_cpu_runtime(runtime_fd, sample);
+    };
+    // BPF 已挂载后重新建立基线，不能把加载前的 /proc 区间与加载后的 BPF 比较。
+    if (!read_system_cpu_stat(previous_system) ||
+        !read_all_thread_cpu_stats(previous_threads, runtime_hook)) {
+        ring_buffer__free(ring);
+        destroy_links(links);
+        bpf_object__close(object);
+        return 1;
+    }
+    previous_sample_time = std::chrono::steady_clock::now();
+
+    uint64_t previous_probe_errors = 0;
+    read_cpu_probe_errors(object, previous_probe_errors);
+    uint64_t previous_window_end = cpu_monotonic_ns();
+    int result = 0;
+
     // Ctrl+C 和 SIGTERM 都走正常退出路径，保证 BPF 被解除挂载。
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
@@ -577,6 +697,7 @@ int main(
                 << "Ring buffer poll failed: "
                 << error
                 << std::endl;
+            result = 1;
             break;
         }
 
@@ -608,10 +729,11 @@ int main(
         if (!read_system_cpu_stat(
                 current_system) ||
             !read_all_thread_cpu_stats(
-                current_threads)) {
+                current_threads, runtime_hook)) {
             std::cerr
                 << "Cannot read current system CPU snapshot"
                 << std::endl;
+            result = 1;
             break;
         }
 
@@ -647,16 +769,23 @@ int main(
              * observation 是 /proc sampler 与 CpuAnalyzer 的数据边界：
              * sampler 只负责计算，analyzer 只负责阈值和责任归因。
              */
+            // 扫描期间积压的事件也先消费，再按事件时间过滤归窗。
+            if (ring_buffer__consume(ring) < 0) {
+                result = 1;
+                break;
+            }
             CpuUsageObservation observation;
             // 保存与本轮快照对应的单调时钟纳秒时间戳。
-            observation.timestamp_ns =
-                static_cast<uint64_t>(
-                    std::chrono::duration_cast<
-                        std::chrono::nanoseconds>(
-                        current_sample_time
-                            .time_since_epoch())
-                        .count());
+            observation.timestamp_ns = cpu_monotonic_ns();
+            observation.window_start_ns = previous_window_end;
+            previous_window_end = observation.timestamp_ns;
             // 系统使用率决定系统级 HighUsage 是否满足触发条件。
+            uint64_t current_probe_errors = 0;
+            observation.scheduling_evidence_valid =
+                read_cpu_probe_errors(object, current_probe_errors) &&
+                current_probe_errors == previous_probe_errors;
+            previous_probe_errors = current_probe_errors;
+            observation.has_runtime_snapshots = true;
             observation.system_usage_percent =
                 system_usage;
             /*
@@ -688,6 +817,7 @@ int main(
              */
             std::cout
                 << "[CPU RCA]"
+                << " sample_ns=" << cpu_monotonic_ns()
                 << " state="
                 << diagnosis_state_name(
                     diagnosis.state)
@@ -712,6 +842,9 @@ int main(
                 << "%"
                 << " culprit_oncpu_ns="
                 << diagnosis.culprit_oncpu_time_ns
+                << " runtime_valid=" << diagnosis.culprit_runtime_valid
+                << " runtime_window_ns=" << diagnosis.culprit_runtime_window_ns
+                << " runtime_uncertainty_ns=" << diagnosis.culprit_runtime_uncertainty_ns
                 << " culprit_runqueue_ns="
                 << diagnosis.culprit_runqueue_delay_ns
                 << " victim_tid="
@@ -752,7 +885,14 @@ int main(
      * consume 不等待通知，只处理当前已经留在 RingBuffer 中的记录，
      * 避免批量唤醒不足一个批次的尾部事件丢在退出阶段。
      */
-    ring_buffer__consume(ring);
+    /* 先停止生产事件，再消费尾部，最后读取稳定的内核统计。 */
+    destroy_links(links);
+    if (ring_buffer__consume(ring) < 0) {
+        std::cerr << "Failed to consume final CPU events\n";
+        result = 1;
+    }
+    if (!print_cpu_probe_stats(object))
+        result = 1;
 
     std::cout
         << "CPU RCA system-wide test stopped"
@@ -765,13 +905,10 @@ int main(
         << std::endl;
 
     /*
-     * 资源释放顺序：
-     * 1. 释放用户态 RingBuffer 消费器；
-     * 2. 销毁 links，让 BPF 程序从 hook 上 detach；
-     * 3. 关闭 bpf_object 和剩余 Map/程序文件描述符。
+     * links 已在尾部消费前解除挂载；统计读取完成后，
+     * 释放用户态 RingBuffer，最后关闭 object 和 Map 文件描述符。
      */
     ring_buffer__free(ring);
-    destroy_links(links);
     bpf_object__close(object);
-    return 0;
+    return result;
 }

@@ -1,0 +1,35 @@
+{
+  "label": "full-1",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.197,
+  "samples": 31,
+  "hot_samples": 14,
+  "worker_pids": [
+    45883,
+    45884,
+    45885,
+    45886,
+    45887,
+    45888,
+    45889,
+    45890
+  ],
+  "alert_latency_seconds": 3.164342539,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 1,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 99.81896106187398,
+  "max_hot_bpf_percent": 100.0,
+  "log": "/tmp/kylinrca-cpu-validation/full-1.log",
+  "max_usage_difference_pp_from_saved_log": 0.7207641436579735,
+  "repository_log": "records/full-1.txt"
+}

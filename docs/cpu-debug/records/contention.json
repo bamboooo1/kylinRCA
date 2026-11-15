@@ -1,0 +1,45 @@
+{
+  "label": "contention",
+  "passed": false,
+  "errors": [
+    "bad_runqueue_timestamp 非零或缺失"
+  ],
+  "elapsed_seconds": 32.145,
+  "samples": 31,
+  "hot_samples": 14,
+  "worker_pids": [
+    46037,
+    46038,
+    46039,
+    46040,
+    46041,
+    46042,
+    46043,
+    46044,
+    46045,
+    46046,
+    46047,
+    46048,
+    46049,
+    46050,
+    46051,
+    46052
+  ],
+  "alert_latency_seconds": 3.354116849,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 3,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 49.884760812408686,
+  "max_hot_bpf_percent": 68.66174185631225,
+  "log": "/tmp/kylinrca-cpu-validation/contention.log",
+  "max_usage_difference_pp_from_saved_log": 1.3928860342057945,
+  "repository_log": "records/contention.txt"
+}

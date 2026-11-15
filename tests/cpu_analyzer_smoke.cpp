@@ -233,7 +233,7 @@ void test_runqueue_pressure_and_window_reset()
     assert(analyzer.stats().at(4000).pid == 400);
 }
 
-void test_abnormal_types_do_not_mix()
+void test_high_usage_survives_pressure_changes()
 {
     CpuAnalyzerConfig config;
     config.alert_consecutive_samples = 3;
@@ -264,9 +264,9 @@ void test_abnormal_types_do_not_mix()
     analyzer.process_usage(process_high);
 
     assert(analyzer.diagnosis().state ==
-           CpuDiagnosisState::Normal);
+           CpuDiagnosisState::HighUsage);
 
-    assert(analyzer.diagnosis().consecutive_samples == 1);
+    assert(analyzer.diagnosis().consecutive_samples == 0);
 }
 
 void test_system_wide_culprit_selection()
@@ -359,7 +359,7 @@ int main()
     test_high_usage_and_recovery();
     test_runqueue_pressure_and_window_reset();
     test_system_wide_culprit_selection();
-    test_abnormal_types_do_not_mix();
+    test_high_usage_survives_pressure_changes();
 
     std::cout
         << "cpu_analyzer_test passed"
