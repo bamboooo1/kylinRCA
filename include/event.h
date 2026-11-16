@@ -62,5 +62,34 @@ struct cpu_event {
     __u64 on_cpu_time_ns;
 };
 
+/*
+ * I/O 操作类型。
+ */
+enum io_operation {
+    IO_OP_UNKNOWN = 0,
+    IO_OP_READ    = 1,
+    IO_OP_WRITE   = 2,
+    IO_OP_OTHER   = 3,
+};
+
+/*
+ * 一次块请求完成后的事件。
+ * header.timestamp_ns：最终完成时的单调时钟时间，单位纳秒。
+ * header.pid/tid：无法确认请求归属时填 0。
+ */
+struct kylinrca_io_event {
+    struct kylinrca_event_header header;
+
+    __u64 duration_ns; //从选定 issue 起点到请求最终完成的耗时，单位纳秒
+    __u64 bytes;  //本次观测请求的数据量，单位字节
+    __u64 sector; //请求起始扇区号
+
+    __u32 dev_major; //设备主、次编号
+    __u32 dev_minor;
+
+    __u32 operation; //我们定义的读、写或其他操作
+    __u32 status; //	内核块层完成状态，约定 0 为成功
+};
+
 
 #endif
