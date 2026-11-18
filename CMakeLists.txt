@@ -248,6 +248,7 @@ add_executable(kylinrca_cpu_runtime_smoke
 target_include_directories(kylinrca_cpu_runtime_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(kylinrca_cpu_runtime_smoke PRIVATE PkgConfig::LIBBPF)
 enable_testing()
+add_test(NAME syscall_analyzer COMMAND kylinrca_syscall_analyzer_smoke)
 add_test(NAME cpu_analyzer COMMAND kylinrca_cpu_analyzer_smoke)
 add_test(NAME cpu_runtime_window COMMAND kylinrca_cpu_runtime_smoke)
 add_test(NAME json_reporter COMMAND kylinrca_json_reporter_smoke)
@@ -284,6 +285,13 @@ target_compile_definitions(kylinrca_lock_probe_smoke PRIVATE
 add_dependencies(kylinrca_lock_probe_smoke lock_bpf)
 
 find_package(Threads REQUIRED)
+add_executable(kylinrca_syscall_pid_test tests/syscall_pid_test.cpp)
+target_include_directories(kylinrca_syscall_pid_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_syscall_pid_test PRIVATE PkgConfig::LIBBPF Threads::Threads)
+target_compile_definitions(kylinrca_syscall_pid_test PRIVATE
+    KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}")
+add_dependencies(kylinrca_syscall_pid_test syscall_bpf)
+
 add_executable(kylinrca_lock_wait_workload tests/lock_wait_workload.cpp)
 target_link_libraries(kylinrca_lock_wait_workload PRIVATE Threads::Threads)
 add_test(NAME lock_wait_workload COMMAND kylinrca_lock_wait_workload --auto --iterations 1)
