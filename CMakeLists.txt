@@ -309,3 +309,26 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME mutex_probe_validation
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/mutex_probe_validation_test.py)
 endif()
+
+
+# W3 I/O 原始采集：不依赖后续 IoAnalyzer/RCA。
+set(IO_BPF_OBJECT ${CMAKE_CURRENT_BINARY_DIR}/io.bpf.o)
+add_custom_command(
+    OUTPUT ${IO_BPF_OBJECT}
+    COMMAND ${CLANG_EXECUTABLE} -g -O2 -Wall -Werror -target bpf
+        -D__TARGET_ARCH_${BPF_TARGET_ARCH}
+        -I${CMAKE_CURRENT_SOURCE_DIR}/bpf/include
+        -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -c ${CMAKE_CURRENT_SOURCE_DIR}/bpf/io.bpf.c -o ${IO_BPF_OBJECT}
+    DEPENDS bpf/io.bpf.c include/event.h include/io_probe_stats.h
+        bpf/include/bpf_common.h bpf/include/vmlinux.h
+    VERBATIM)
+add_custom_target(io_bpf ALL DEPENDS ${IO_BPF_OBJECT})
+add_executable(kylinrca_io_probe_smoke tests/io_probe_smoke.cpp)
+target_include_directories(kylinrca_io_probe_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_io_probe_smoke PRIVATE PkgConfig::LIBBPF)
+target_compile_options(kylinrca_io_probe_smoke PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(kylinrca_io_probe_smoke PRIVATE
+    KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
+add_dependencies(kylinrca_io_probe_smoke io_bpf)
+add_test(NAME io_probe_help COMMAND kylinrca_io_probe_smoke --help)
