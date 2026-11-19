@@ -62,6 +62,16 @@ struct cpu_event {
     __u64 on_cpu_time_ns;
 };
 
+/*一次 futex 等待调用结束后的记录。*/
+struct kylinrca_lock_event {
+    struct kylinrca_event_header header; //	事件类型、时间戳、PID/TID 等公共信息
+    __u64 lock_addr; //    锁地址，用户态传入的 futex 地址
+    __u64 duration_ns; //    从调用开始到返回的耗时，单位纳秒
+    __s64 ret;      //    futex 调用返回值，内核层返回的原始值
+    __u32 futex_op; //	等待操作及其标志
+    __u32 reserved;  // 	预留字段，发送时置零
+};
+
 /*
  * I/O 操作类型。
  */
