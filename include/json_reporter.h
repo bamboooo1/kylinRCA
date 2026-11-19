@@ -2,6 +2,7 @@
 #define KYLINRCA_JSON_REPORTER_H
 
 #include "syscall_analyzer.h"
+#include "io_analyzer.h"
 
 #include <string>
 
@@ -9,6 +10,7 @@ class LockAnalyzer; //类的前向声明。它只是告诉编译器：后面会�
 
 class JsonReporter {
 public:
+    static std::string report_io(const IoReport& report);
     static std::string report_syscalls(const SyscallAnalyzer& analyzer); //要求输入SyscallAnalyzer class对象
     static std::string report_locks(const LockAnalyzer& analyzer);
 };
