@@ -80,3 +80,16 @@ sudo python3 scripts/check_mutex_probe.py
 
 真实互斥锁场景默认使用 8 个工作线程。完整运行步骤、采集口径和 JSON 日志位置见
 [Lock 采集验证说明](docs/lock_probe_validation.md)。当前验证采集链路，不包含锁竞争诊断规则。
+
+## LockAnalyzer 与竞争诊断
+
+Issue #22 的窗口聚合、`LOCK_CONTENTION` 规则和 JSON 报告已接入现有 Lock 采集入口：
+
+```bash
+sudo ./build/kylinrca_lock_probe_smoke --pid 12345 --duration 10 --analyze
+```
+
+将 `12345` 替换为真实目标 PID。默认按 1 秒窗口统计同一进程、同一 futex 地址上的
+成功明显等待，输出不同等待线程数、平均/最大耗时和主要竞争对象；连续正常窗口后恢复。
+实现规划、阈值、统计口径、测试和双终端验证步骤见
+[LockAnalyzer 与 Lock RCA](docs/lock_analyzer.md)。
