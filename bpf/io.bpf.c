@@ -2,20 +2,13 @@
 #include "event.h"
 #include "io_probe_stats.h"
 #include <bpf/bpf_core_read.h>
+#include <bpf/bpf_tracing.h>
+#include "io_request_state.h"
 
 /*
  * rq 指针仅作为内核内部关联键，不发送给用户态。
  * 普通 HASH 跨 CPU 共享；容量固定，满时计数而不静默淘汰请求。
  */
-struct io_request_start {
-    __u64 start_ns;
-    __u64 bytes; //记录开始时的请求长度，避免之后请求被部分完成而改变
-    __u64 sector;
-    __u32 major;
-    __u32 minor;
-    __u32 operation;
-    __u32 status; //初始为 0；部分完成遇到错误时，保存错误状态
-};
 KYLINRCA_DECLARE_HASH_MAP(
     io_starts, // Map 的名字
     __u64, // key：请求地址转换成的整数
@@ -29,6 +22,25 @@ struct {
     __type(key, __u32);
     __type(value, __u64);
 } io_stats SEC(".maps");
+
+/* 存放新增的生命周期统计 */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, IO_LIFE_MAX);
+    __type(key, __u32);
+    __type(value, __u64);
+} io_lifecycle_stats SEC(".maps");
+static __always_inline void lifecycle_add(__u32 key, __u64 amount)
+{
+    __u64 *value = bpf_map_lookup_elem(&io_lifecycle_stats, &key);
+    if (value) {
+        if (key == IO_LIFE_MAX_REQUEUES) { //对于“IO_LIFE_MAX_REQUEUES”，只在新值更大时更新value
+            if (amount > *value) *value = amount;
+        } else {
+            *value = amount > ~(__u64)0 - *value ? ~(__u64)0 : *value + amount;
+        }
+    }
+}
 
 /* 0 表示采集所有设备；编号与 gendisk 的 major/first_minor 对应。 */
 struct {
@@ -49,6 +61,20 @@ static __always_inline void forget(__u64 key)
 {
     if (bpf_map_delete_elem(&io_starts, &key))
         count(IO_STAT_MAP_DELETE_FAIL);
+}
+
+/* 内核准备释放这个请求时，如果我们的 Map 还留着它的记录，就补充删除。
+ * 现在 requeue 不再删除记录，如果某个请求走了释放路径，却没有被我们的最终完成处理清理，旧记录就可能残留。
+ * 以后同一个地址被新请求使用时，就可能串到旧记录上。 */
+SEC("kprobe/__blk_mq_free_request")
+int BPF_KPROBE(handle_io_free, struct request *rq)
+{
+    __u64 key = (__u64)rq;
+    if (bpf_map_lookup_elem(&io_starts, &key)) {
+        lifecycle_add(IO_LIFE_RELEASE_CLEANUP, 1);
+        forget(key);
+    }
+    return 0;
 }
 
 /*
@@ -100,10 +126,14 @@ int handle_io_issue(struct bpf_raw_tracepoint_args *ctx)
     start.operation = op == REQ_OP_READ ? IO_OP_READ :
                       op == REQ_OP_WRITE ? IO_OP_WRITE : IO_OP_OTHER;
     start.bytes = bytes;
-    if (bpf_map_lookup_elem(&io_starts, &key)) //如果请求已经存在就记录一次reissue
-        count(IO_STAT_REISSUE);
-    /* 每次 issue 重置：延迟口径是最近一次 issue 到最终完成。 */
-    if (bpf_map_update_elem(&io_starts, &key, &start, BPF_ANY))
+    struct io_request_start *saved = bpf_map_lookup_elem(&io_starts, &key);
+    if (saved) {
+        count(IO_STAT_REISSUE); //如果这个地址的issue已经存在，就标记reissue
+        if (!io_state_reissue(saved)) //如果没有观察到重新排队，却又发生了 issue
+            lifecycle_add(IO_LIFE_UNEXPECTED_REISSUE, 1);
+        return 0;
+    }
+    if (bpf_map_update_elem(&io_starts, &key, &start, BPF_NOEXIST))
         count(IO_STAT_MAP_UPDATE_FAIL);
     return 0;
 }
@@ -135,32 +165,19 @@ int handle_io_complete(struct bpf_raw_tracepoint_args *ctx)
     /*
      * 遇到第一个非零错误状态，就把它记住
      * 第一次部分完成可能报错，而最后一次完成的状态可能是 0。如果只看最后一次，就可能丢掉之前的错误证据。
+     * 判断此次为全部完成还是部分完成
      */
-    if (status && !saved->status) 
-        saved->status = status;
-
-    /*
-     * blk_update_request 在更新 bio/__data_len 之前触发 complete。
-     * bio 存在且本次只完成一部分时保留记录，不能提前删除。
-     * 无 bio（例如 flush）或完成量覆盖剩余量才输出。例如：
-     *  第一次通知：
-        remaining = 8192
-        completed = 4096
-        → 部分完成，保留记录
-
-        内核随后把剩余长度更新为 4096
-
-        第二次通知：
-        remaining = 4096
-        completed = 4096
-        → 覆盖剩余长度，可以进入最终完成处理
-     */
-    if (bio && completed < remaining) {
+    if (!io_state_complete(saved, status, completed, remaining, bio != 0)) {
         count(IO_STAT_PARTIAL);
         return 0;
     }
 
     struct io_request_start start = *saved;
+    if (start.requeue_count) {
+        lifecycle_add(IO_LIFE_REQUEUED_COMPLETED, 1);
+        lifecycle_add(IO_LIFE_COMPLETED_REQUEUES, start.requeue_count);
+        lifecycle_add(IO_LIFE_MAX_REQUEUES, start.requeue_count);
+    }
     forget(key); /* 即使 RingBuffer 满，也回收请求，避免地址复用串联。 */
     if (now < start.start_ns) {
         count(IO_STAT_BAD_TIMESTAMP);
@@ -178,8 +195,9 @@ int handle_io_complete(struct bpf_raw_tracepoint_args *ctx)
     event->header.size = sizeof(*event);
     event->header.timestamp_ns = now;
     /* 异步 I/O 完成上下文不能代表发起进程；pid/tid 保留为 0。 */
+    /* 首次观测到 issue -> 最终完成, 包括重排. */
     event->duration_ns = now - start.start_ns;
-    event->bytes = start.bytes;
+    event->bytes = start.bytes; /* 第一次issue时的字节长度. */
     event->sector = start.sector;
     event->dev_major = start.major;
     event->dev_minor = start.minor;
@@ -194,9 +212,10 @@ SEC("raw_tracepoint/block_rq_requeue")
 int handle_io_requeue(struct bpf_raw_tracepoint_args *ctx)
 {
     __u64 key = ctx->args[0];
-    if (bpf_map_lookup_elem(&io_starts, &key)) {
+    struct io_request_start *saved = bpf_map_lookup_elem(&io_starts, &key);
+    if (saved) {
         count(IO_STAT_REQUEUE);
-        forget(key); /* 丢弃本次尝试，下一次 issue 重新计时。 */
+        io_state_requeue(saved);
     }
     return 0; //重排队表示：本次下发没有让请求最终完成，请求被放回队列，等待再次处理。
 }

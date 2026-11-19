@@ -1,5 +1,6 @@
 #include "event.h"
 #include "io_probe_stats.h"
+#include "../bpf/include/io_request_state.h"
 #include <bpf/bpf.h>
 #include <bpf/btf.h>
 #include <bpf/libbpf.h>
@@ -236,6 +237,23 @@ int main(int argc, char **argv)
                 unsigned long long sum = 0;
                 for (auto value : values) sum += value;
                 std::cout << "STAT " << names[key] << "=" << sum << "\n";
+            }
+        }
+        const char *life_names[] = {"requeued_completed", "completed_requeues",
+            "max_requeues", "unexpected_reissue", "release_cleanup"};
+        int life_fd = bpf_object__find_map_fd_by_name(obj, "io_lifecycle_stats");
+        if (cpus <= 0 || life_fd < 0) result = 1;
+        else {
+            std::vector<__u64> values(cpus);
+            for (__u32 k = 0; k < IO_LIFE_MAX; ++k) {
+                if (bpf_map_lookup_elem(life_fd, &k, values.data())) { result = 1; break; }
+                unsigned long long aggregate = 0;
+                for (auto v : values) {
+                    if (k == IO_LIFE_MAX_REQUEUES) {
+                        if (v > aggregate) aggregate = v;
+                    } else aggregate += v;
+                }
+                std::cout << "STAT " << life_names[k] << "=" << aggregate << "\n";
             }
         }
         unsigned pending = 0;
