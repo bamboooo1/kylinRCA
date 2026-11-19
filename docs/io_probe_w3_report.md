@@ -1,5 +1,7 @@
 # W3 B 的第一个任务：Block I/O Probe 实现与验证报告
 
+> 本文保留首次验收时的历史口径。2026-11-18 已修复 requeue 后重置时间与长度的问题；当前实现、计数器及验证限制见 [Review 修复报告](io_requeue_review_fix.md)。下文“最近一次 issue”和“requeue 删除记录”不再描述当前代码。
+
 日期：2026-11-16（Asia/Shanghai）  
 工作分支：`feat/io-probe`  
 范围：内核采集、请求关联、原始事件传输及最小用户态验证；不包含 IoAnalyzer、P95/P99、IO_LATENCY RCA 或 fio 场景。

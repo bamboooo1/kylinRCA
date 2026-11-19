@@ -60,3 +60,7 @@ sudo python3 scripts/check_cpu_pipeline.py --label contention --oversubscribe
 
 CPU 诊断新增 `runtime_valid`、`runtime_window_ns`、`runtime_uncertainty_ns`。
 运行时间来自独立 BPF 累计快照差分；缺失快照不等于线程没有运行。
+
+## W3 I/O Analyzer
+
+设备窗口聚合、IO_LATENCY 和 JSON 输出的运行与验收见 [IoAnalyzer 报告](docs/io_analyzer_w3_report.md)。

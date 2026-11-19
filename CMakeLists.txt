@@ -261,7 +261,7 @@ add_custom_command(
         -I${CMAKE_CURRENT_SOURCE_DIR}/bpf/include
         -I${CMAKE_CURRENT_SOURCE_DIR}/include
         -c ${CMAKE_CURRENT_SOURCE_DIR}/bpf/io.bpf.c -o ${IO_BPF_OBJECT}
-    DEPENDS bpf/io.bpf.c include/event.h include/io_probe_stats.h
+    DEPENDS bpf/io.bpf.c bpf/include/io_request_state.h include/event.h include/io_probe_stats.h
         bpf/include/bpf_common.h bpf/include/vmlinux.h
     VERBATIM)
 add_custom_target(io_bpf ALL DEPENDS ${IO_BPF_OBJECT})
@@ -273,3 +273,21 @@ target_compile_definitions(kylinrca_io_probe_smoke PRIVATE
     KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
 add_dependencies(kylinrca_io_probe_smoke io_bpf)
 add_test(NAME io_probe_help COMMAND kylinrca_io_probe_smoke --help)
+
+# W3 B task 2: windowed device aggregation and RCA.
+add_library(kylinrca_io_analysis src/io_analyzer.cpp src/io_json_reporter.cpp)
+target_include_directories(kylinrca_io_analysis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(kylinrca_io_analysis PRIVATE -Wall -Wextra -Werror)
+add_executable(kylinrca_io_rca_smoke tests/io_rca_smoke.cpp)
+target_link_libraries(kylinrca_io_rca_smoke PRIVATE kylinrca_io_analysis PkgConfig::LIBBPF)
+target_compile_options(kylinrca_io_rca_smoke PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(kylinrca_io_rca_smoke PRIVATE KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
+add_dependencies(kylinrca_io_rca_smoke io_bpf)
+add_executable(kylinrca_io_analyzer_smoke tests/io_analyzer_smoke.cpp)
+target_link_libraries(kylinrca_io_analyzer_smoke PRIVATE kylinrca_io_analysis)
+add_test(NAME io_analyzer COMMAND kylinrca_io_analyzer_smoke)
+add_test(NAME io_rca_help COMMAND kylinrca_io_rca_smoke --help)
+
+add_executable(kylinrca_io_lifecycle_smoke tests/io_lifecycle_smoke.cpp)
+target_compile_options(kylinrca_io_lifecycle_smoke PRIVATE -Wall -Wextra -Werror)
+add_test(NAME io_request_lifecycle COMMAND kylinrca_io_lifecycle_smoke)
