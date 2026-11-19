@@ -248,9 +248,68 @@ add_executable(kylinrca_cpu_runtime_smoke
 target_include_directories(kylinrca_cpu_runtime_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(kylinrca_cpu_runtime_smoke PRIVATE PkgConfig::LIBBPF)
 enable_testing()
+add_test(NAME syscall_analyzer COMMAND kylinrca_syscall_analyzer_smoke)
 add_test(NAME cpu_analyzer COMMAND kylinrca_cpu_analyzer_smoke)
 add_test(NAME cpu_runtime_window COMMAND kylinrca_cpu_runtime_smoke)
 add_test(NAME json_reporter COMMAND kylinrca_json_reporter_smoke)
+
+set(LOCK_BPF_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bpf/lock.bpf.c)
+set(LOCK_BPF_OBJECT ${CMAKE_CURRENT_BINARY_DIR}/lock.bpf.o)
+
+add_custom_command(
+    OUTPUT ${LOCK_BPF_OBJECT}
+    COMMAND
+        ${CLANG_EXECUTABLE}
+        -g -O2 -target bpf
+        -D__TARGET_ARCH_${BPF_TARGET_ARCH}
+        -I${CMAKE_CURRENT_SOURCE_DIR}/bpf/include
+        -I${CMAKE_CURRENT_SOURCE_DIR}/include
+        -c ${LOCK_BPF_SOURCE}
+        -o ${LOCK_BPF_OBJECT}
+    DEPENDS
+        ${LOCK_BPF_SOURCE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/event.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/lock_probe.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/bpf_common.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/bpf/include/vmlinux.h
+    VERBATIM
+)
+
+add_custom_target(lock_bpf ALL DEPENDS ${LOCK_BPF_OBJECT})
+
+add_executable(kylinrca_lock_probe_smoke tests/lock_probe_test.cpp)
+target_include_directories(kylinrca_lock_probe_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_lock_probe_smoke PRIVATE PkgConfig::LIBBPF)
+target_compile_definitions(kylinrca_lock_probe_smoke PRIVATE
+    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}")
+add_dependencies(kylinrca_lock_probe_smoke lock_bpf)
+
+find_package(Threads REQUIRED)
+add_executable(kylinrca_syscall_pid_test tests/syscall_pid_test.cpp)
+target_include_directories(kylinrca_syscall_pid_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_syscall_pid_test PRIVATE PkgConfig::LIBBPF Threads::Threads)
+target_compile_definitions(kylinrca_syscall_pid_test PRIVATE
+    KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}")
+add_dependencies(kylinrca_syscall_pid_test syscall_bpf)
+
+add_executable(kylinrca_lock_wait_workload tests/lock_wait_workload.cpp)
+target_link_libraries(kylinrca_lock_wait_workload PRIVATE Threads::Threads)
+add_test(NAME lock_wait_workload COMMAND kylinrca_lock_wait_workload --auto --iterations 1)
+
+add_executable(kylinrca_lock_test scenarios/lock_test.cpp)
+target_link_libraries(kylinrca_lock_test PRIVATE Threads::Threads)
+add_test(NAME mutex_contention_workload
+    COMMAND kylinrca_lock_test --scenario contention --threads 8 --auto)
+add_test(NAME mutex_uncontended_workload
+    COMMAND kylinrca_lock_test --scenario uncontended --threads 8 --auto)
+set_tests_properties(mutex_contention_workload mutex_uncontended_workload PROPERTIES TIMEOUT 15)
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME mutex_probe_validation
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/mutex_probe_validation_test.py)
+endif()
+
 
 # W3 I/O 原始采集：不依赖后续 IoAnalyzer/RCA。
 set(IO_BPF_OBJECT ${CMAKE_CURRENT_BINARY_DIR}/io.bpf.o)

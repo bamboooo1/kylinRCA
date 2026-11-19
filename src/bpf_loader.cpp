@@ -1,6 +1,7 @@
 #include "json_reporter.h"
 #include "ring_buffer_consumer.h"
 #include "syscall_analyzer.h"
+#include "syscall_bpf_config.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -77,6 +78,13 @@ int main()
     }
 
     std::cout << "Tracer PID configured: " << tracer_pid << std::endl;
+
+    // 在挂载前配置编号所属的命名空间，禁止混用内核 PID 与用户态 PID。
+    if (!configure_syscall_namespace(obj)) {
+        std::cerr << "Failed to configure syscall PID namespace: " << std::strerror(errno) << std::endl;
+        bpf_object__close(obj);
+        return 1;
+    }
 
     // 5. 找 sys_enter BPF program
     struct bpf_program* enter_prog = bpf_object__find_program_by_name(obj, "handle_sys_enter");

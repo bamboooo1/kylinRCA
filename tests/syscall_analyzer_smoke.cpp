@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <sys/syscall.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 int main()
 {
@@ -31,6 +33,14 @@ int main()
 
     const auto& all_stats = analyzer.stats();
 
+    const auto& reads = all_stats.at(1234).at(SYS_read);
+    const auto& writes = all_stats.at(1234).at(SYS_write);
+    if (reads.count != 2 || reads.total_duration_ns != 4000 || reads.max_duration_ns != 3000 ||
+        reads.error_count != 0 || writes.count != 1 || writes.error_count != 1) {
+        std::cerr << "Syscall aggregation failed\n";
+        return 1;
+    }
+
     for (const auto& [pid, syscall_map] : all_stats) {
 
         for (const auto& [syscall_id, stat] : syscall_map) {
@@ -52,5 +62,23 @@ int main()
         }
     }
 
+    // 用户态可见的 PID 应能直接用于存活检查：保留自己，清理已退出的子进程。
+    const pid_t child = fork();
+    if (child < 0)
+        return 1;
+    if (child == 0)
+        _exit(0);
+    if (waitpid(child, nullptr, 0) != child)
+        return 1;
+    SyscallAnalyzer cleanup_analyzer;
+    event1.header.pid = getpid();
+    cleanup_analyzer.process(event1);
+    event1.header.pid = child;
+    cleanup_analyzer.process(event1);
+    if (cleanup_analyzer.cleanup_exited_processes(std::chrono::seconds(0)) != 1 ||
+        cleanup_analyzer.process_count() != 1 || cleanup_analyzer.stats().count(getpid()) != 1) {
+        std::cerr << "Visible PID process cleanup failed\n";
+        return 1;
+    }
     return 0;
 }
