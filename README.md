@@ -71,7 +71,7 @@ CPU 诊断新增 `runtime_valid`、`runtime_window_ns`、`runtime_uncertainty_ns
 
 ## W3 I/O Analyzer
 
-设备窗口聚合、IO_LATENCY 和 JSON 输出的运行与验收见 [IoAnalyzer 报告](docs/io_analyzer_w3_report.md)。
+I/O 默认按设备连续三个异常窗口触发 IO_LATENCY，连续三个正常或空窗口恢复。设备窗口聚合、JSON 输出的运行与验收见 [IoAnalyzer 报告](docs/io_analyzer_w3_report.md)。
 
 ## W3 fio 场景与重复验收
 

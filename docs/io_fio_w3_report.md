@@ -29,14 +29,14 @@ sudo python3 scripts/check_io_analyzer.py --repeat 1 --threshold-us 100 --min-sa
 | 设备 | `losetup --find --show` 新分配的 loop，记录 major:minor |
 | fio | libaio、direct=1、randwrite、128 KiB、iodepth=64、numjobs=1、运行 4 秒 |
 | 采集 | 目标设备过滤、约 1 秒窗口、采集 12 秒；READY 后空闲约 2 秒再启动 fio |
-| 诊断门槛 | P95 >= 100 µs 且窗口样本数 >= 10 |
+| 诊断门槛 | 连续 3 个完整窗口 P95 >= 100 µs 且窗口样本数 >= 10；连续 3 个非异常窗口恢复 |
 | 对照 | 首个窗口为空，负载后末尾连续 3 个窗口为空 |
 
 100 µs 是虚拟 loop 验收的显式灵敏度设置，产品默认阈值仍为 10 ms。该场景验证真实块层事件和诊断链路，不代表物理磁盘故障；宿主缓存可能影响结果，不能用 loop 测量物理磁盘性能，也不保证默认 10 ms 在任意设备触发。
 
 ## 判定及证据
 
-每轮检查目标设备真实事件、正样本数/bytes/延迟、有效 P95/P99，以及满足配置门槛的 IO_LATENCY。fio 所有 job 必须成功并写入数据。以下条件也必须成立：
+每轮检查目标设备真实事件、正样本数/bytes/延迟、有效 P95/P99，并独立重放连续三次触发与三次恢复的状态序列。首次触发必须有三个连续异常窗口；恢复观察期间的持续告警不要求当前窗口仍达到 P95 门槛。fio 所有 job 必须成功并写入数据。以下条件也必须成立：
 
 - RingBuffer 丢失、Map 更新/删除失败、时间错误、读取错误均为 0，缺失计数也失败。
 - Probe emitted 等于 Consumer received；invalid=0、pending=0。
@@ -53,7 +53,7 @@ unmatched 保留原计数语义，含挂载前完成及过滤范围外事件，�
 - `fio.json`、`fio.stderr`：负载输出。
 - `results.json`：该轮通过且清理成功后生成的完整结果。
 
-失败/中断返回非零，总结果 passed=false。判定回归测试含 9 个测试方法及多个子场景，覆盖健康计数错误/缺失、错误设备、未触发、空闲残留、Analyzer 拒绝、Consumer 差异、迟到核对及 fio 失败，纳入 CTest。
+失败/中断返回非零，总结果 passed=false。判定回归测试含 10 个测试方法及多个子场景，覆盖健康计数错误/缺失、错误设备、未触发、空闲残留、Analyzer 拒绝、Consumer 差异、迟到核对及 fio 失败，纳入 CTest。
 
 ## 清理
 
@@ -61,7 +61,7 @@ unmatched 保留原计数语义，含挂载前完成及过滤范围外事件，�
 
 SIGKILL 或断电无法运行 finally。恢复时从 metadata.json 读取 image 和 loop，先用 `sudo losetup --associated /tmp/kylinrca-fio-实际目录/disk.img` 核对归属，再 detach 对应设备；确认无关联后删除该镜像及专用临时目录。实际路径以 metadata 为准，只清理本次创建的资源。
 
-## 本机验收
+## 初始单窗口版本的历史验收
 
 Ubuntu 26.04 LTS / WSL2、x86_64、内核 `6.18.33.2-microsoft-standard-WSL2`、fio 3.41、util-linux 2.41.3。
 
@@ -80,3 +80,20 @@ Ubuntu 26.04 LTS / WSL2、x86_64、内核 `6.18.33.2-microsoft-standard-WSL2`、
 构建、CTest 13/13 和 git diff --check 全部通过。最终原始产物：`build/io-fio-final/{environment.json,results.json,run-01/,run-02/,run-03/}`，build 被 Git 忽略。
 
 满足 #26 的重复运行、真实 block I/O、稳定触发及环境/阈值/清理记录要求。未验证物理 SSD、ARM64 或长期运行；没有修改其他 W3 任务或 GitHub 状态。
+
+## 2026-11-20：三窗口状态机更新
+
+默认规则已改为按设备连续三次异常触发、三次正常或空窗口恢复，且恢复期再次异常重新计数。JSON 用 devices 表示当前样本、diagnoses 表示仍在告警的设备。最后不足整窗报告 window_complete=false，不参与状态推进。前面的历史数据不能替代本次状态机验收。
+
+脚本逐窗独立计算期望状态并核对 JSON，覆盖前两次不告警、第三次触发、空窗口保留告警、第三次正常解除，以及末尾无告警。合成回归另覆盖交替异常、设备隔离、恢复中断、正常有样本的恢复、配置校验、容量释放及部分窗口。运行命令与负载参数保持不变。
+
+构建及 CTest 16/16、git diff --check 全部通过。连续三轮真实 fio/BPF 验收通过，每轮均验证第三个异常窗口才触发、恢复期前两次保留告警、第三次正常恢复，末尾无样本且无持续告警。每轮 3 个有样本的已确认告警窗口，另有 2 个空窗口处于恢复观察期。
+
+| 轮次 | 接收事件 | 显式迟到 | 有样本的告警窗口 | 含恢复期的告警窗口 | 清理 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| run-01 | 78053 | 0 | 3 | 5 | 完成 |
+| run-02 | 74960 | 0 | 3 | 5 | 完成 |
+| run-03 | 75946 | 1 | 3 | 5 | 完成 |
+
+原始产物：`build/io-fio-20261120-191313-964914`。Probe 和 Analyzer 健康计数由脚本核对通过，三轮临时 loop 和镜像均已清理。
+

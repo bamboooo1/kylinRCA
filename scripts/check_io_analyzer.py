@@ -51,14 +51,47 @@ def validate(rows, health, fio, device, threshold_us, min_samples):
                 and d["avg_duration_ns"] > 0
                 and d["p99_duration_ns"] >= d["p95_duration_ns"] > 0,
                 "invalid device metrics")
-    # 不仅要求出现告警，还要确认样本数与 P95 确实达到配置门槛。
-    # 报告用纳秒，命令行阈值用微秒，因此需要乘以 1000。
-    alerts = [d for d in devices if d["diagnosis"] == "IO_LATENCY"]
-    require(alerts and all(d["sample_count"] >= min_samples
-                          and d["p95_duration_ns"] >= threshold_us * 1000
-                          for d in alerts), "fio did not trigger valid IO_LATENCY")
-    # 负载结束后连续三个空窗口，用于检查旧告警是否已清除。
-    require(all(not r["devices"] for r in rows[-3:]), "idle tail retains events/alerts")
+    # 独立重放设备状态，检查第三次才触发、第三次正常才恢复。
+    states = {}
+    alerts = []
+    for row in rows:
+        require(row["alert_consecutive_windows"] == 3 and row["recovery_consecutive_windows"] == 3,
+                "unexpected consecutive-window configuration")
+        current = {d["device"]: d for d in row["devices"]}
+        if row["window_complete"]:
+            for key in set(states) | set(current):
+                d = current.get(key)
+                abnormal = d is not None and d["sample_count"] >= min_samples and d["p95_duration_ns"] >= threshold_us * 1000
+                state = states.setdefault(key, {"active": False, "abnormal": 0, "recovery": 0})
+                if abnormal:
+                    state["abnormal"] = min(state["abnormal"] + 1, 3)
+                    state["recovery"] = 0
+                    state["active"] = state["active"] or state["abnormal"] == 3
+                else:
+                    state["abnormal"] = 0
+                    if state["active"]:
+                        state["recovery"] += 1
+                        state["active"] = state["recovery"] < 3
+                if not state["active"] and not state["abnormal"]:
+                    del states[key]
+        expected = {key: {"device": key, "diagnosis": "IO_LATENCY",
+                          "abnormal_windows": state["abnormal"], "recovery_windows": state["recovery"]}
+                    for key, state in states.items() if state["active"]}
+        actual = {d["device"]: d for d in row["diagnoses"]}
+        require(actual == expected, "persistent diagnosis or recovery sequence differs")
+        for key, d in current.items():
+            state = states.get(key, {"active": False, "abnormal": 0, "recovery": 0})
+            abnormal = d["sample_count"] >= min_samples and d["p95_duration_ns"] >= threshold_us * 1000
+            require(d["window_abnormal"] == abnormal
+                    and d["diagnosis"] == ("IO_LATENCY" if state["active"] else "NORMAL")
+                    and d["abnormal_windows"] == state["abnormal"]
+                    and d["recovery_windows"] == state["recovery"], "device state differs")
+            if state["active"]:
+                alerts.append(d)
+    require(alerts, "fio did not trigger confirmed IO_LATENCY")
+    # 空闲末尾不仅没有新样本，持续告警也必须已经解除。
+    require(all(not r["devices"] and not r["diagnoses"] for r in rows[-3:]),
+            "idle tail retains events/alerts")
     require(all(r[k] == 0 for r in rows
                 for k in ("invalid_events", "capacity_drops")),
             "analyzer rejected or dropped events")
