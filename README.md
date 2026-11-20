@@ -71,7 +71,15 @@ CPU 诊断新增 `runtime_valid`、`runtime_window_ns`、`runtime_uncertainty_ns
 
 ## W3 I/O Analyzer
 
-设备窗口聚合、IO_LATENCY 和 JSON 输出的运行与验收见 [IoAnalyzer 报告](docs/io_analyzer_w3_report.md)。
+I/O 默认按设备连续三个异常窗口触发 IO_LATENCY，连续三个正常或空窗口恢复。设备窗口聚合、JSON 输出的运行与验收见 [IoAnalyzer 报告](docs/io_analyzer_w3_report.md)。
+
+## W3 fio 场景与重复验收
+
+```bash
+sudo python3 scripts/check_io_analyzer.py
+```
+
+默认在三轮独立临时 loop 设备上验证真实 I/O、IO_LATENCY 和空闲恢复；负载参数、环境与命令记录、结果位置及清理方式见 [fio 验收报告](docs/io_fio_w3_report.md)。
 
 ## Lock 探针与真实互斥锁验证
 

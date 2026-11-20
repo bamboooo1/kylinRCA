@@ -4,6 +4,26 @@
 分支：feat/io-analyzer  
 任务：https://github.com/bamboooo1/kylinRCA/issues/25
 
+## 2026-11-20：连续窗口触发与恢复
+
+当前实现按设备维护持续诊断，替代下文历史版本的单窗口即时告警。默认完整窗口约 1 秒：
+
+- 同一设备连续 3 个完整窗口满足“样本数 >= min_samples 且 P95 >= 阈值”，第三次结算才触发 IO_LATENCY。
+- 触发后连续 3 个完整窗口不满足条件（含空窗口、样本不足窗口）才恢复。第一次、第二次仍保留告警。
+- 正常窗口打断尚未触发的异常序列；恢复观察期再次异常会清零恢复计数。
+- 设备之间独立计数。C++ 配置 alert_consecutive_windows / recovery_consecutive_windows 默认为 3，必须为正。
+- finish_window 每次完整结算推进一次状态，不按跨度猜测多个窗口。调用方须定期结算；退出时不足整窗传 complete=false，仅输出数据，不改变连续次数。
+
+JSON 的 devices 只保存当前窗口样本，新增 window_abnormal、abnormal_windows、recovery_windows；原 diagnosis 字段改为持续状态，前两次异常仍是 NORMAL，恢复前两次仍是 IO_LATENCY。
+
+新增顶层 diagnoses，列出仍在告警的设备及其连续计数；即使 devices=[]，恢复期 diagnoses 也可能非空。因此不能再仅用 devices=[] 判断已恢复，应检查 diagnoses=[]。阈值与 window_complete 也输出到报告。
+
+持续状态不复制旧窗口的延迟指标，避免历史证据被误标为当前数据。统计和状态共享 max_devices 上限；恢复或未触发序列中断后释放状态。底层 Probe、事件协议、延迟口径及默认 10 ms 阈值保持原有定义。
+
+“连续三次”过滤短时波动，同时增加约数个窗口的确认延迟；空窗口只代表没有收到完成样本，不能证明所有在途请求都正常。采集健康仍需结合 Probe 计数判断。
+
+以下“实现及口径”和“实际验收”保留 #25 初始单窗口版本的历史记录；当前验收见 fio 报告的状态机更新段。
+
 ## 实现及口径
 
 新增 include/io_analyzer.h、src/io_analyzer.cpp、src/io_json_reporter.cpp、tests/io_rca_smoke.cpp。
@@ -51,3 +71,7 @@ Ubuntu WSL2；构建及 CTest 6/6 通过。单测覆盖设备隔离、bytes、�
 ## 事件校验职责更新
 
 RCA 回调只检查原始记录长度并复制数据；版本、类型、声明长度、当前 Probe 的 PID/TID=0 约定、操作范围和时间合理性统一由 IoAnalyzer 校验。process_detailed 返回 Accepted/Invalid/Late/CapacityDropped，process 保留原 bool 接口并调用同一处理逻辑。Consumer 的 received/reads/writes/bytes 统计格式有效的接收事件（含迟到或超容量事件），窗口设备统计只包含 Accepted；invalid 是整次运行的原始长度错误和内容非法总数，窗口 invalid_events 只统计到达 Analyzer 的内容非法事件。--max-print 只限制原始调试行数，默认0，不限制采集、分析或窗口 JSON。
+
+## #26 场景入口更新
+
+`check_io_analyzer.py` 现默认执行三轮并创建独立输出目录，采用 `scenarios/io_latency.fio`。复现步骤和清理记录见 [fio 验收报告](io_fio_w3_report.md)。上文原始数据及 build/io-analyzer-validation 路径属于 #25 历史验收。

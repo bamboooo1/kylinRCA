@@ -244,7 +244,7 @@ int main(int argc, char **argv)
     } while (false);
     cleanup();
     if (!links.empty())
-        std::cout << JsonReporter::report_io(consumer.analyzer.finish_window(now_ns())) << std::endl;
+        std::cout << JsonReporter::report_io(consumer.analyzer.finish_window(now_ns(), false)) << std::endl;
 
     if (!links.empty()) {
         const char *names[] = {"issue", "complete", "partial", "requeue",
