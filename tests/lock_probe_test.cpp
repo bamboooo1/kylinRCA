@@ -1,15 +1,18 @@
 /*用户态入口，负责加载内核探针、接收锁事件、打印结果和清理资源。
     这个程序负责把编译后的 lock.bpf.o 加载到内核、写入配置、挂载探针，然后等待 RingBuffer 中的事件。
-    收到事件后，它先检查版本、类型和长度，再打印字段。
+    收到事件后，它先检查版本、类型和长度，再打印字段；--analyze 同时输出窗口诊断。
     输出格式类似：
     [LOCK] timestamp_ns=… pid=4200 tid=4202 lock_addr=0x… futex_op=128 duration_ns=6000000 ret=0*/
 #include "lock_probe.h"
+#include "lock_analyzer.h"
+#include "json_reporter.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/futex.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -37,6 +40,7 @@ struct Options {
     int duration = 0; //运行时长，默认时长为 0 表示持续运行
     uint32_t pid = 0; //目标进程，PID 为 0 表示不限制目标进程
     std::string object = KYLINRCA_LOCK_BPF_OBJECT; //BPF 文件路径
+    bool analyze = false; // 同时执行窗口聚合、竞争诊断和 JSON 输出。
 };
 
 /*检查一段文字是否能完整转换为正整数，并把结果写入 value。*/
@@ -47,12 +51,14 @@ bool positive_integer(const char* text, int& value)
     return parsed.ec == std::errc{} && parsed.ptr == end && value > 0; // 检查转换是否成功，且没有剩余字符，且值大于 0
 }
 
-/*解析 --duration、`--pid`、`--object`，填写 Options；参数不合法时返回 false。*/
+/*解析运行时长、PID、对象路径和分析开关；参数不合法时返回 false。*/
 bool parse_options(int argc, char** argv, Options& options)
 {
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
-        if (argument == "--duration" || argument == "--pid") {
+        if (argument == "--analyze") {
+            options.analyze = true;
+        } else if (argument == "--duration" || argument == "--pid") {
             int value = 0;
             if (++i == argc || !positive_integer(argv[i], value))
                 return false;
@@ -103,7 +109,28 @@ struct Session {
 struct EventContext {
     uint64_t received = 0;
     uint64_t rejected = 0;
+    bool analyze = false;
+    LockAnalyzer analyzer;
+    uint64_t reported_end_ns = 0;
 };
+
+/*使用与 bpf_ktime_get_ns 相同的 CLOCK_MONOTONIC 时钟推进分析窗口。*/
+uint64_t monotonic_ns()
+{
+    timespec now {};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+        return 0;
+    return static_cast<uint64_t>(now.tv_sec) * 1'000'000'000ULL + now.tv_nsec;
+}
+
+/*每个已结算窗口输出一次；原始事件格式保持兼容现有采集验收脚本。*/
+void report_window(EventContext& context)
+{
+    if (context.analyzer.window_end_ns() != context.reported_end_ns) {
+        std::cout << JsonReporter::report_locks(context.analyzer) << std::flush;
+        context.reported_end_ns = context.analyzer.window_end_ns();
+    }
+}
 
 /*收到 RingBuffer 数据时执行。
     检查事件长度、版本、类型等；有效则打印并计入 received，无效则计入 rejected。*/
@@ -127,6 +154,8 @@ int handle_event(void* opaque, void* data, size_t size)
     }
 
     ++context.received;
+    if (context.analyze)
+        context.analyzer.process(event);
     std::cout << "[LOCK] timestamp_ns=" << event.header.timestamp_ns
               << " pid=" << event.header.pid
               << " tid=" << event.header.tid
@@ -207,7 +236,7 @@ int main(int argc, char** argv)
     // 请求帮助时打印启动方式并退出。
     if (argc == 2 && std::string(argv[1]) == "--help") {
         std::cout << "Usage: " << argv[0]
-                  << " [--duration seconds] [--pid pid] [--object path]\n";
+                  << " [--duration seconds] [--pid pid] [--object path] [--analyze]\n";
         return 0;
     }
     // 解析运行时长、目标 PID 和 BPF 文件路径。
@@ -247,6 +276,9 @@ int main(int argc, char** argv)
 
     // 创建事件消费者，指定收到数据后执行 handle_event。
     EventContext context;
+    context.analyze = options.analyze;
+    if (context.analyze)
+        context.analyzer.advance_window(monotonic_ns());
     bpf_map* events = bpf_object__find_map_by_name(session.object, "events");
     if (events)
         session.ring = ring_buffer__new(bpf_map__fd(events), handle_event, &context, nullptr);
@@ -287,6 +319,11 @@ int main(int argc, char** argv)
             result = 1;
             break;
         }
+        // 没有新事件时仍推进窗口，让已经结束的竞争可以恢复为 NORMAL。
+        if (context.analyze) {
+            context.analyzer.advance_window(monotonic_ns());
+            report_window(context);
+        }
         // 设置了运行时长时，到期退出；默认 0 表示持续运行。
         if (options.duration > 0 && std::chrono::steady_clock::now() - started >=
             std::chrono::seconds(options.duration))
@@ -300,9 +337,13 @@ int main(int argc, char** argv)
         std::cerr << "Cannot drain lock events or read probe statistics.\n";
         result = 1;
     }
+    if (context.analyze) {
+        context.analyzer.flush(monotonic_ns());
+        report_window(context);
+    }
     // 打印用户态接收和拒绝的事件数量。
     std::cout << "[LOCK PROBE] received=" << context.received
               << " rejected=" << context.rejected << std::endl;
     // 返回退出状态；离开 main 时由 Session 自动释放剩余资源。
-    return context.rejected ? 1 : result;
+    return context.rejected || (context.analyze && context.analyzer.rejected_events()) ? 1 : result;
 }
