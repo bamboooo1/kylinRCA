@@ -1,0 +1,897 @@
+{
+  "validation_kind": "historical_capture_replay",
+  "capture_date": "2026-11-19",
+  "fresh_bpf_capture": false,
+  "note": "Replay of the manual captures reviewed for PR #33. Keeps all raw events and three consecutive relevant windows per case.",
+  "cases": [
+    {
+      "source_logs": [
+        {
+          "path": "/tmp/issue22-contention-retry-workload.log",
+          "sha256": "f69171d0e71eed84988ce0271d21bf80299f12cf1836f2cd3077a6476b0b546f"
+        },
+        {
+          "path": "/tmp/issue22-contention-probe.log",
+          "sha256": "6a33a272b84e665e6020da3a283a9bbaa5ea7add1f70176d437262dda2e70074"
+        }
+      ],
+      "original_window_count": 30,
+      "input": {
+        "scenario": "contention",
+        "ready": {
+          "pid": "75948",
+          "scenario": "contention",
+          "threads": "8",
+          "mutex_addr": "0x6312a9531020",
+          "mutex_size": "40",
+          "mutex_count": "1",
+          "hold_ms": "100"
+        },
+        "workers": [
+          {
+            "pid": "75948",
+            "tid": "76219",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403080942",
+            "acquired_ns": "347677506551032",
+            "application_wait_ns": "103470090",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76220",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403081194",
+            "acquired_ns": "347677510271101",
+            "application_wait_ns": "107189907",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76221",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403104802",
+            "acquired_ns": "347677505245974",
+            "application_wait_ns": "102141172",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76222",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403080680",
+            "acquired_ns": "347677509037169",
+            "application_wait_ns": "105956489",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76223",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403080327",
+            "acquired_ns": "347677503884110",
+            "application_wait_ns": "100803783",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76224",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403108323",
+            "acquired_ns": "347677511492936",
+            "application_wait_ns": "108384613",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76225",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403327869",
+            "acquired_ns": "347677512709099",
+            "application_wait_ns": "109381230",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "75948",
+            "tid": "76226",
+            "mutex_addr": "0x6312a9531020",
+            "mutex_size": "40",
+            "wait_start_ns": "347677403128252",
+            "acquired_ns": "347677507816488",
+            "application_wait_ns": "104688236",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          }
+        ],
+        "summary": {
+          "scenario": "contention",
+          "threads": "8",
+          "acquisitions": "8",
+          "counter": "8",
+          "passed": "1"
+        },
+        "events": [
+          {
+            "timestamp_ns": "347677503695114",
+            "pid": "75948",
+            "tid": "76223",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "100610879",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677505174847",
+            "pid": "75948",
+            "tid": "76221",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "102067023",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677506485321",
+            "pid": "75948",
+            "tid": "76219",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "103399614",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677507749365",
+            "pid": "75948",
+            "tid": "76226",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "104618448",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677507819203",
+            "pid": "75948",
+            "tid": "75948",
+            "lock_addr": "0x7e7fae3ffce8",
+            "futex_op": "265",
+            "duration_ns": "4018082",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677508980063",
+            "pid": "75948",
+            "tid": "76222",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "105894244",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677510217605",
+            "pid": "75948",
+            "tid": "76220",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "107132376",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677511438139",
+            "pid": "75948",
+            "tid": "76224",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "108327628",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677511493996",
+            "pid": "75948",
+            "tid": "75948",
+            "lock_addr": "0x7e7fadbfece8",
+            "futex_op": "265",
+            "duration_ns": "3662666",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677512662976",
+            "pid": "75948",
+            "tid": "76225",
+            "lock_addr": "0x6312a9531020",
+            "futex_op": "128",
+            "duration_ns": "109333505",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347677515839475",
+            "pid": "75948",
+            "tid": "75948",
+            "lock_addr": "0x7e7fac3fbce8",
+            "futex_op": "265",
+            "duration_ns": "4337034",
+            "ret": "0"
+          }
+        ],
+        "counters": {
+          "futex_enter": 20,
+          "wait_enter": 11,
+          "wait_exit": 11,
+          "start_update_fail": 0,
+          "start_miss": 0,
+          "delete_fail": 0,
+          "ringbuf_drop": 0,
+          "bad_timestamp": 0,
+          "thread_exit_cleanup": 0,
+          "received": 11,
+          "rejected": 0
+        },
+        "reports": [
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347677000000000,
+            "window_end_ns": 347678000000000,
+            "received_events": 11,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "LOCK_CONTENTION",
+              "pid": 75948,
+              "lock_addr": "0x6312a9531020",
+              "evidence_window_start_ns": 347677000000000,
+              "evidence_window_end_ns": 347678000000000,
+              "recovery_windows": 0,
+              "event_count": 8,
+              "wait_count": 8,
+              "waiting_threads": 8,
+              "avg_wait_ns": 105172964,
+              "max_wait_ns": 109333505,
+              "total_wait_ns": 841383717,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": [
+                76219,
+                76220,
+                76221,
+                76222,
+                76223,
+                76224,
+                76225,
+                76226
+              ]
+            },
+            "processes": [
+              {
+                "pid": 75948,
+                "locks": [
+                  {
+                    "lock_addr": "0x6312a9531020",
+                    "event_count": 8,
+                    "wait_count": 8,
+                    "waiting_threads": 8,
+                    "avg_wait_ns": 105172964,
+                    "max_wait_ns": 109333505,
+                    "total_wait_ns": 841383717,
+                    "short_wait_count": 0,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": [
+                      76219,
+                      76220,
+                      76221,
+                      76222,
+                      76223,
+                      76224,
+                      76225,
+                      76226
+                    ]
+                  },
+                  {
+                    "lock_addr": "0x7e7fac3fbce8",
+                    "event_count": 1,
+                    "wait_count": 1,
+                    "waiting_threads": 1,
+                    "avg_wait_ns": 4337034,
+                    "max_wait_ns": 4337034,
+                    "total_wait_ns": 4337034,
+                    "short_wait_count": 0,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": [
+                      75948
+                    ]
+                  },
+                  {
+                    "lock_addr": "0x7e7fadbfece8",
+                    "event_count": 1,
+                    "wait_count": 1,
+                    "waiting_threads": 1,
+                    "avg_wait_ns": 3662666,
+                    "max_wait_ns": 3662666,
+                    "total_wait_ns": 3662666,
+                    "short_wait_count": 0,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": [
+                      75948
+                    ]
+                  },
+                  {
+                    "lock_addr": "0x7e7fae3ffce8",
+                    "event_count": 1,
+                    "wait_count": 1,
+                    "waiting_threads": 1,
+                    "avg_wait_ns": 4018082,
+                    "max_wait_ns": 4018082,
+                    "total_wait_ns": 4018082,
+                    "short_wait_count": 0,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": [
+                      75948
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347678000000000,
+            "window_end_ns": 347679000000000,
+            "received_events": 11,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "LOCK_CONTENTION",
+              "pid": 75948,
+              "lock_addr": "0x6312a9531020",
+              "evidence_window_start_ns": 347677000000000,
+              "evidence_window_end_ns": 347678000000000,
+              "recovery_windows": 1,
+              "event_count": 8,
+              "wait_count": 8,
+              "waiting_threads": 8,
+              "avg_wait_ns": 105172964,
+              "max_wait_ns": 109333505,
+              "total_wait_ns": 841383717,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": [
+                76219,
+                76220,
+                76221,
+                76222,
+                76223,
+                76224,
+                76225,
+                76226
+              ]
+            },
+            "processes": []
+          },
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347679000000000,
+            "window_end_ns": 347680000000000,
+            "received_events": 11,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "NORMAL",
+              "pid": 0,
+              "lock_addr": "0x0",
+              "evidence_window_start_ns": 0,
+              "evidence_window_end_ns": 0,
+              "recovery_windows": 0,
+              "event_count": 0,
+              "wait_count": 0,
+              "waiting_threads": 0,
+              "avg_wait_ns": 0,
+              "max_wait_ns": 0,
+              "total_wait_ns": 0,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": []
+            },
+            "processes": []
+          }
+        ]
+      },
+      "result": {
+        "passed": true,
+        "scenario": "contention",
+        "pid": 75948,
+        "threads": 8,
+        "worker_tids": [
+          76219,
+          76220,
+          76221,
+          76222,
+          76223,
+          76224,
+          76225,
+          76226
+        ],
+        "hold_ms": 100,
+        "minimum_wait_ns": 50000000,
+        "mutex_addr": "0x6312a9531020",
+        "mutex_size": 40,
+        "mutex_count": 1,
+        "matched_events": 8,
+        "long_waiters": 8,
+        "futex_addresses": [
+          "0x6312a9531020"
+        ],
+        "max_duration_ns": 109333505,
+        "counters": {
+          "futex_enter": 20,
+          "wait_enter": 11,
+          "wait_exit": 11,
+          "start_update_fail": 0,
+          "start_miss": 0,
+          "delete_fail": 0,
+          "ringbuf_drop": 0,
+          "bad_timestamp": 0,
+          "thread_exit_cleanup": 0,
+          "received": 11,
+          "rejected": 0
+        },
+        "errors": [],
+        "window_count": 3,
+        "alert_windows": [
+          {
+            "window_start_ns": 347677000000000,
+            "window_end_ns": 347678000000000,
+            "lock_addr": "0x6312a9531020",
+            "event_count": 8,
+            "wait_count": 8,
+            "waiting_threads": 8,
+            "total_wait_ns": 841383717,
+            "avg_wait_ns": 105172964,
+            "max_wait_ns": 109333505,
+            "short_wait_count": 0,
+            "eagain_count": 0,
+            "timeout_count": 0,
+            "interrupted_count": 0,
+            "other_error_count": 0,
+            "waiting_tids": [
+              76219,
+              76220,
+              76221,
+              76222,
+              76223,
+              76224,
+              76225,
+              76226
+            ]
+          }
+        ],
+        "recovery_observed": true,
+        "thresholds": {
+          "window_ns": 1000000000,
+          "minimum_wait_ns": 1000000,
+          "average_wait_threshold_ns": 10000000,
+          "max_wait_threshold_ns": 50000000,
+          "minimum_waiting_threads": 2,
+          "recovery_windows": 2
+        }
+      }
+    },
+    {
+      "source_logs": [
+        {
+          "path": "/tmp/issue22-uncontended-workload.log",
+          "sha256": "419727d14538835137bbf9e609d15d2035bb7fcbbefd6899ac8666b7942a3aec"
+        },
+        {
+          "path": "/tmp/issue22-uncontended-probe.log",
+          "sha256": "1efe7dbed37cd4af1a25fd8f1b89a954b955ed05d0e0f555ca7dc0c76f7be989"
+        }
+      ],
+      "original_window_count": 30,
+      "input": {
+        "scenario": "uncontended",
+        "ready": {
+          "pid": "77274",
+          "scenario": "uncontended",
+          "threads": "8",
+          "mutex_addr": "0x563044709020",
+          "mutex_size": "40",
+          "mutex_count": "8",
+          "hold_ms": "100"
+        },
+        "workers": [
+          {
+            "pid": "77274",
+            "tid": "77712",
+            "mutex_addr": "0x563044709020",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333574411",
+            "acquired_ns": "347902333574962",
+            "application_wait_ns": "551",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77713",
+            "mutex_addr": "0x563044709048",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333808158",
+            "acquired_ns": "347902333808779",
+            "application_wait_ns": "621",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77714",
+            "mutex_addr": "0x563044709070",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333573964",
+            "acquired_ns": "347902333574817",
+            "application_wait_ns": "853",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77715",
+            "mutex_addr": "0x563044709098",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333573839",
+            "acquired_ns": "347902333574762",
+            "application_wait_ns": "923",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77716",
+            "mutex_addr": "0x5630447090c0",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333573418",
+            "acquired_ns": "347902333574596",
+            "application_wait_ns": "1178",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77717",
+            "mutex_addr": "0x5630447090e8",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333721640",
+            "acquired_ns": "347902333722630",
+            "application_wait_ns": "990",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77718",
+            "mutex_addr": "0x563044709110",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333751453",
+            "acquired_ns": "347902333751671",
+            "application_wait_ns": "218",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          },
+          {
+            "pid": "77274",
+            "tid": "77719",
+            "mutex_addr": "0x563044709138",
+            "mutex_size": "40",
+            "wait_start_ns": "347902333767854",
+            "acquired_ns": "347902333768091",
+            "application_wait_ns": "237",
+            "lock_ret": "0",
+            "unlock_ret": "0"
+          }
+        ],
+        "summary": {
+          "scenario": "uncontended",
+          "threads": "8",
+          "acquisitions": "8",
+          "counter": "8",
+          "passed": "1"
+        },
+        "events": [
+          {
+            "timestamp_ns": "347902335290235",
+            "pid": "77274",
+            "tid": "77274",
+            "lock_addr": "0x7886001ffce8",
+            "futex_op": "265",
+            "duration_ns": "1717853",
+            "ret": "0"
+          },
+          {
+            "timestamp_ns": "347902336183563",
+            "pid": "77274",
+            "tid": "77274",
+            "lock_addr": "0x7885ff9fece8",
+            "futex_op": "265",
+            "duration_ns": "728866",
+            "ret": "0"
+          }
+        ],
+        "counters": {
+          "futex_enter": 2,
+          "wait_enter": 2,
+          "wait_exit": 2,
+          "start_update_fail": 0,
+          "start_miss": 0,
+          "delete_fail": 0,
+          "ringbuf_drop": 0,
+          "bad_timestamp": 0,
+          "thread_exit_cleanup": 0,
+          "received": 2,
+          "rejected": 0
+        },
+        "reports": [
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347902000000000,
+            "window_end_ns": 347903000000000,
+            "received_events": 2,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "NORMAL",
+              "pid": 0,
+              "lock_addr": "0x0",
+              "evidence_window_start_ns": 0,
+              "evidence_window_end_ns": 0,
+              "recovery_windows": 0,
+              "event_count": 0,
+              "wait_count": 0,
+              "waiting_threads": 0,
+              "avg_wait_ns": 0,
+              "max_wait_ns": 0,
+              "total_wait_ns": 0,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": []
+            },
+            "processes": [
+              {
+                "pid": 77274,
+                "locks": [
+                  {
+                    "lock_addr": "0x7885ff9fece8",
+                    "event_count": 1,
+                    "wait_count": 0,
+                    "waiting_threads": 0,
+                    "avg_wait_ns": 0,
+                    "max_wait_ns": 0,
+                    "total_wait_ns": 0,
+                    "short_wait_count": 1,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": []
+                  },
+                  {
+                    "lock_addr": "0x7886001ffce8",
+                    "event_count": 1,
+                    "wait_count": 1,
+                    "waiting_threads": 1,
+                    "avg_wait_ns": 1717853,
+                    "max_wait_ns": 1717853,
+                    "total_wait_ns": 1717853,
+                    "short_wait_count": 0,
+                    "eagain_count": 0,
+                    "timeout_count": 0,
+                    "interrupted_count": 0,
+                    "other_error_count": 0,
+                    "waiting_tids": [
+                      77274
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347903000000000,
+            "window_end_ns": 347904000000000,
+            "received_events": 2,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "NORMAL",
+              "pid": 0,
+              "lock_addr": "0x0",
+              "evidence_window_start_ns": 0,
+              "evidence_window_end_ns": 0,
+              "recovery_windows": 0,
+              "event_count": 0,
+              "wait_count": 0,
+              "waiting_threads": 0,
+              "avg_wait_ns": 0,
+              "max_wait_ns": 0,
+              "total_wait_ns": 0,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": []
+            },
+            "processes": []
+          },
+          {
+            "type": "lock_summary",
+            "wait_metric": "completed_futex_wait_ns",
+            "window_start_ns": 347904000000000,
+            "window_end_ns": 347905000000000,
+            "received_events": 2,
+            "rejected_events": 0,
+            "late_events": 0,
+            "thresholds": {
+              "window_ns": 1000000000,
+              "minimum_wait_ns": 1000000,
+              "average_wait_threshold_ns": 10000000,
+              "max_wait_threshold_ns": 50000000,
+              "minimum_waiting_threads": 2,
+              "recovery_windows": 2
+            },
+            "diagnosis": {
+              "type": "NORMAL",
+              "pid": 0,
+              "lock_addr": "0x0",
+              "evidence_window_start_ns": 0,
+              "evidence_window_end_ns": 0,
+              "recovery_windows": 0,
+              "event_count": 0,
+              "wait_count": 0,
+              "waiting_threads": 0,
+              "avg_wait_ns": 0,
+              "max_wait_ns": 0,
+              "total_wait_ns": 0,
+              "short_wait_count": 0,
+              "eagain_count": 0,
+              "timeout_count": 0,
+              "interrupted_count": 0,
+              "other_error_count": 0,
+              "waiting_tids": []
+            },
+            "processes": []
+          }
+        ]
+      },
+      "result": {
+        "passed": true,
+        "scenario": "uncontended",
+        "pid": 77274,
+        "threads": 8,
+        "worker_tids": [
+          77712,
+          77713,
+          77714,
+          77715,
+          77716,
+          77717,
+          77718,
+          77719
+        ],
+        "hold_ms": 100,
+        "minimum_wait_ns": 50000000,
+        "mutex_addr": "0x563044709020",
+        "mutex_size": 40,
+        "mutex_count": 8,
+        "matched_events": 0,
+        "long_waiters": 0,
+        "futex_addresses": [],
+        "max_duration_ns": 0,
+        "counters": {
+          "futex_enter": 2,
+          "wait_enter": 2,
+          "wait_exit": 2,
+          "start_update_fail": 0,
+          "start_miss": 0,
+          "delete_fail": 0,
+          "ringbuf_drop": 0,
+          "bad_timestamp": 0,
+          "thread_exit_cleanup": 0,
+          "received": 2,
+          "rejected": 0
+        },
+        "errors": [],
+        "window_count": 3,
+        "alert_windows": [],
+        "recovery_observed": false,
+        "thresholds": {
+          "window_ns": 1000000000,
+          "minimum_wait_ns": 1000000,
+          "average_wait_threshold_ns": 10000000,
+          "max_wait_threshold_ns": 50000000,
+          "minimum_waiting_threads": 2,
+          "recovery_windows": 2
+        }
+      }
+    }
+  ]
+}

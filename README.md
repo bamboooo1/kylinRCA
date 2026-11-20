@@ -97,3 +97,16 @@ sudo ./build/kylinrca_lock_probe_smoke --pid 12345 --duration 10 --analyze
 成功明显等待，输出不同等待线程数、平均/最大耗时和主要竞争对象；连续正常窗口后恢复。
 实现规划、阈值、统计口径、测试和双终端验证步骤见
 [LockAnalyzer 与 Lock RCA](docs/lock_analyzer.md)。
+
+## Lock 场景与诊断自动验收
+
+Issue #23 的自动复现会取得负载 PID，挂好探针后放行线程，默认重复运行 3 轮
+8 线程竞争和无竞争对照，并检查 JSON 指标、主要竞争对象及告警恢复：
+
+```bash
+sudo python3 scripts/check_lock_rca.py
+```
+
+每次执行会在 `/tmp/kylinrca-lock-rca-validation/run-*` 中保存独立的日志和结果。
+实现规划、通过标准、历史结果回放与新一轮实采的区别见
+[锁竞争场景自动验收](docs/lock_scenario_validation.md)。
