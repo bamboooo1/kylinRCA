@@ -323,6 +323,10 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME lock_json_reporter
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lock_json_reporter_test.py
             $<TARGET_FILE:kylinrca_lock_analyzer_smoke>)
+    add_test(NAME lock_rca_validation
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lock_rca_validation_test.py)
+    add_test(NAME lock_rca_script_help
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_lock_rca.py --help)
 endif()
 
 

@@ -1,0 +1,11 @@
+[MUTEX WORKLOAD] ready pid=275764 scenario=contention threads=8 mutex_addr=0x58bd246d2020 mutex_size=40 mutex_count=1 hold_ms=100
+Press Enter after the lock probe is ready.
+[MUTEX WORKER] pid=275764 tid=275768 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646407046 acquired_ns=412628749250551 application_wait_ns=102843505 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275769 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646446215 acquired_ns=412628755349721 application_wait_ns=108903506 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275770 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646408034 acquired_ns=412628748056775 application_wait_ns=101648741 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275771 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646408320 acquired_ns=412628751718239 application_wait_ns=105309919 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275772 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646407245 acquired_ns=412628746713400 application_wait_ns=100306155 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275773 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646407580 acquired_ns=412628750502237 application_wait_ns=104094657 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275774 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646421941 acquired_ns=412628752928905 application_wait_ns=106506964 lock_ret=0 unlock_ret=0
+[MUTEX WORKER] pid=275764 tid=275775 mutex_addr=0x58bd246d2020 mutex_size=40 wait_start_ns=412628646436851 acquired_ns=412628754143908 application_wait_ns=107707057 lock_ret=0 unlock_ret=0
+[MUTEX RESULT] scenario=contention threads=8 acquisitions=8 counter=8 passed=1
