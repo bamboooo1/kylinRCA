@@ -51,3 +51,7 @@ Ubuntu WSL2；构建及 CTest 6/6 通过。单测覆盖设备隔离、bytes、�
 ## 事件校验职责更新
 
 RCA 回调只检查原始记录长度并复制数据；版本、类型、声明长度、当前 Probe 的 PID/TID=0 约定、操作范围和时间合理性统一由 IoAnalyzer 校验。process_detailed 返回 Accepted/Invalid/Late/CapacityDropped，process 保留原 bool 接口并调用同一处理逻辑。Consumer 的 received/reads/writes/bytes 统计格式有效的接收事件（含迟到或超容量事件），窗口设备统计只包含 Accepted；invalid 是整次运行的原始长度错误和内容非法总数，窗口 invalid_events 只统计到达 Analyzer 的内容非法事件。--max-print 只限制原始调试行数，默认0，不限制采集、分析或窗口 JSON。
+
+## #26 场景入口更新
+
+`check_io_analyzer.py` 现默认执行三轮并创建独立输出目录，采用 `scenarios/io_latency.fio`。复现步骤和清理记录见 [fio 验收报告](io_fio_w3_report.md)。上文原始数据及 build/io-analyzer-validation 路径属于 #25 历史验收。

@@ -350,3 +350,9 @@ add_test(NAME io_rca_help COMMAND kylinrca_io_rca_smoke --help)
 add_executable(kylinrca_io_lifecycle_smoke tests/io_lifecycle_smoke.cpp)
 target_compile_options(kylinrca_io_lifecycle_smoke PRIVATE -Wall -Wextra -Werror)
 add_test(NAME io_request_lifecycle COMMAND kylinrca_io_lifecycle_smoke)
+
+# 仅核对验收规则的非特权测试；真实 fio/BPF 验收需单独运行脚本。
+if(Python3_Interpreter_FOUND)
+    add_test(NAME io_fio_validation
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/io_fio_validation_test.py)
+endif()
