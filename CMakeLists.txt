@@ -277,12 +277,24 @@ add_custom_command(
 
 add_custom_target(lock_bpf ALL DEPENDS ${LOCK_BPF_OBJECT})
 
+add_library(kylinrca_lock_analysis STATIC
+    src/lock_analyzer.cpp
+    src/lock_json_reporter.cpp)
+target_include_directories(kylinrca_lock_analysis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(kylinrca_lock_analysis PRIVATE -Wall -Wextra -Werror)
+
 add_executable(kylinrca_lock_probe_smoke tests/lock_probe_test.cpp)
 target_include_directories(kylinrca_lock_probe_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(kylinrca_lock_probe_smoke PRIVATE PkgConfig::LIBBPF)
+target_link_libraries(kylinrca_lock_probe_smoke PRIVATE PkgConfig::LIBBPF kylinrca_lock_analysis)
 target_compile_definitions(kylinrca_lock_probe_smoke PRIVATE
     KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}")
 add_dependencies(kylinrca_lock_probe_smoke lock_bpf)
+
+add_executable(kylinrca_lock_analyzer_smoke tests/lock_analyzer_smoke.cpp)
+target_link_libraries(kylinrca_lock_analyzer_smoke PRIVATE kylinrca_lock_analysis)
+target_compile_options(kylinrca_lock_analyzer_smoke PRIVATE -Wall -Wextra -Werror)
+add_test(NAME lock_analyzer COMMAND kylinrca_lock_analyzer_smoke)
+add_test(NAME lock_probe_help COMMAND kylinrca_lock_probe_smoke --help)
 
 find_package(Threads REQUIRED)
 add_executable(kylinrca_syscall_pid_test tests/syscall_pid_test.cpp)
@@ -308,6 +320,9 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME mutex_probe_validation
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/mutex_probe_validation_test.py)
+    add_test(NAME lock_json_reporter
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lock_json_reporter_test.py
+            $<TARGET_FILE:kylinrca_lock_analyzer_smoke>)
 endif()
 
 
