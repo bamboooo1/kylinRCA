@@ -1,0 +1,4 @@
+{"trial": 1, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"trial": 2, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"trial": 3, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"passed": true, "requested_trials": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io", "completed_trials": 3}

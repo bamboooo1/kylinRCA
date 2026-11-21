@@ -1,0 +1,10 @@
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=39 ret=599790
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=186 ret=599791
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=39 ret=599790
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=186 ret=599791
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=39 ret=599790
+[SYSCALL PID] expected_pid=599790 expected_tid=599791 event_pid=599790 event_tid=599791 syscall_id=186 ret=599791
+[SYSCALL PID] identity=PASS matched_calls=6
+[SYSCALL PID] expected_pid=599806 expected_tid=599806 event_pid=599806 event_tid=599806 syscall_id=39 ret=599806
+[SYSCALL PID] expected_pid=599806 expected_tid=599806 event_pid=599806 event_tid=599806 syscall_id=186 ret=599806
+[SYSCALL PID] self_filter=PASS excluded_calls=6 child_calls=2

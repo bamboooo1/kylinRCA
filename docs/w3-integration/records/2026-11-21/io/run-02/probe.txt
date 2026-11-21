@@ -1,0 +1,19 @@
+READY io_rca seconds=12
+STAT issue=87349
+STAT complete=87349
+STAT partial=0
+STAT requeue=0
+STAT unmatched=27
+STAT map_update_fail=0
+STAT map_delete_fail=0
+STAT ringbuf_drop=0
+STAT bad_timestamp=0
+STAT read_fail=0
+STAT emitted=87349
+STAT reissue=0
+STAT requeued_completed=0
+STAT completed_requeues=0
+STAT max_requeues=0
+STAT unexpected_reissue=0
+STAT release_cleanup=0
+SUMMARY received=87349 invalid=0 reads=84 writes=87265 bytes=11439333376 pending=0
