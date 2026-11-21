@@ -4,6 +4,9 @@
 分支：feat/io-analyzer  
 任务：https://github.com/bamboooo1/kylinRCA/issues/25
 
+2026-11-21 的最新 `main` 四模块回归见
+[W3 四模块整合验收](w3_integration_validation.md)。下文保留 #25、#26 各阶段的规则与历史结果。
+
 ## 2026-11-20：连续窗口触发与恢复
 
 当前实现按设备维护持续诊断，替代下文历史版本的单窗口即时告警。默认完整窗口约 1 秒：

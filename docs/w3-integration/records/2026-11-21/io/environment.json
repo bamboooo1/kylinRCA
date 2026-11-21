@@ -1,0 +1,14 @@
+{
+  "started_utc": "2026-11-21T13:14:02.054279+00:00",
+  "kernel": "6.18.58.1-microsoft-standard-WSL2",
+  "architecture": "x86_64",
+  "os_release": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n",
+  "fio_version": "fio-3.41",
+  "losetup_version": "losetup from util-linux 2.41.3",
+  "git_commit": "e694090a30b2d51e357651ff255708259cec837e",
+  "git_status": "",
+  "threshold_us": 100,
+  "min_samples": 10,
+  "window_ms": 1000,
+  "repeat": 3
+}

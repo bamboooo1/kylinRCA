@@ -1,0 +1,723 @@
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ read -r -p "输入终端二打印的测试 PID：" SYSCALL_TEST_PID
+
+python3 - "$W3_RUN/syscall.log" "$SYSCALL_TEST_PID" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+pid = int(sys.argv[2])
+
+marker = text.find('"type": "syscall_summary"')
+assert marker >= 0, "缺少最终 JSON"
+
+start = text.rfind("{", 0, marker)
+report, _ = json.JSONDecoder().raw_decode(text[start:])
+
+target = next((p for p in report["processes"] if p["pid"] == pid), None)
+assert target is not None, "没有找到测试进程"
+
+stats = {s["name"]: s for s in target["syscalls"]}
+for name in ("read", "write"):
+    item = stats.get(name)
+    assert item is not None, f"缺少 {name} 统计"
+    assert item["count"] >= 100, f"{name} 次数不足"
+    assert item["error_count"] == 0, f"{name} 存在错误"
+    print(name, json.dumps(item, ensure_ascii=False))
+
+tracer = re.search(r"Tracer PID configured:\s*(\d+)", text)
+assert tracer is not None, "缺少采集程序 PID"
+assert all(p["pid"] != int(tracer.group(1)) for p in report["processes"]), \
+    "采集程序自身未被过滤"
+
+print("SYSCALL PASS")
+PY
+输入终端二打印的测试 PID：600135
+read {"id": 0, "name": "read", "count": 133, "avg_duration_ns": 1910, "max_duration_ns": 83927, "error_count": 0}
+write {"id": 1, "name": "write", "count": 102, "avg_duration_ns": 805, "max_duration_ns": 26955, "error_count": 0}
+SYSCALL PASS
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ sudo python3 scripts/check_cpu_pipeline.py \
+    --label full \
+    --output-dir "$W3_RUN/cpu" \
+    2>&1 | tee "$W3_RUN/cpu-full.console.log"
+{
+  "label": "full",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.19,
+  "samples": 30,
+  "hot_samples": 13,
+  "worker_pids": [
+    600490,
+    600491,
+    600492,
+    600493,
+    600494,
+    600495,
+    600496,
+    600497
+  ],
+  "alert_latency_seconds": 3.81779836,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 97.89831497471144,
+  "max_hot_bpf_percent": 99.96941653032886,
+  "max_usage_difference_pp": 1.149667036450083,
+  "log": "/tmp/kylinrca-w3-nYsGQb/cpu/full.log"
+}
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ sudo python3 scripts/check_cpu_pipeline.py \
+    --label contention \
+    --oversubscribe \
+    --output-dir "$W3_RUN/cpu" \
+    2>&1 | tee "$W3_RUN/cpu-contention.console.log"
+{
+  "label": "contention",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.124,
+  "samples": 30,
+  "hot_samples": 11,
+  "worker_pids": [
+    600838,
+    600839,
+    600840,
+    600841,
+    600842,
+    600843,
+    600844,
+    600845,
+    600846,
+    600847,
+    600848,
+    600849,
+    600850,
+    600851,
+    600852,
+    600853
+  ],
+  "alert_latency_seconds": 3.435489104,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 49.52099903375968,
+  "max_hot_bpf_percent": 79.92304564498774,
+  "max_usage_difference_pp": 1.344500966240318,
+  "log": "/tmp/kylinrca-w3-nYsGQb/cpu/contention.log"
+}
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ sudo python3 scripts/check_lock_rca.py \
+    --output-dir "$W3_RUN/lock" \
+    2>&1 | tee "$W3_RUN/lock.console.log"
+round=1 scenario=contention passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/contention
+round=1 scenario=uncontended passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/uncontended
+round=2 scenario=contention passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/contention
+round=2 scenario=uncontended passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/uncontended
+round=3 scenario=contention passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/contention
+round=3 scenario=uncontended passed=True logs=/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/uncontended
+{
+  "passed": true,
+  "rounds": 3,
+  "scenarios": [
+    "contention",
+    "uncontended"
+  ],
+  "output_dir": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe",
+  "cases": [
+    {
+      "passed": true,
+      "scenario": "contention",
+      "pid": 603164,
+      "threads": 8,
+      "worker_tids": [
+        603168,
+        603169,
+        603170,
+        603171,
+        603172,
+        603173,
+        603174,
+        603175
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x61209e3ce020",
+      "mutex_size": 40,
+      "mutex_count": 1,
+      "matched_events": 8,
+      "long_waiters": 8,
+      "futex_addresses": [
+        "0x61209e3ce020"
+      ],
+      "max_duration_ns": 108850331,
+      "counters": {
+        "futex_enter": 20,
+        "wait_enter": 11,
+        "wait_exit": 11,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 11,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 5,
+      "alert_windows": [
+        {
+          "window_start_ns": 519246000000000,
+          "window_end_ns": 519247000000000,
+          "lock_addr": "0x61209e3ce020",
+          "event_count": 8,
+          "wait_count": 8,
+          "waiting_threads": 8,
+          "total_wait_ns": 836335723,
+          "avg_wait_ns": 104541965,
+          "max_wait_ns": 108850331,
+          "short_wait_count": 0,
+          "eagain_count": 0,
+          "timeout_count": 0,
+          "interrupted_count": 0,
+          "other_error_count": 0,
+          "waiting_tids": [
+            603168,
+            603169,
+            603170,
+            603171,
+            603172,
+            603173,
+            603174,
+            603175
+          ]
+        }
+      ],
+      "recovery_observed": true,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "contention",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603164",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/contention/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/contention/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    },
+    {
+      "passed": true,
+      "scenario": "uncontended",
+      "pid": 603216,
+      "threads": 8,
+      "worker_tids": [
+        603220,
+        603221,
+        603222,
+        603223,
+        603224,
+        603225,
+        603226,
+        603227
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x5eb9d42d5020",
+      "mutex_size": 40,
+      "mutex_count": 8,
+      "matched_events": 0,
+      "long_waiters": 0,
+      "futex_addresses": [],
+      "max_duration_ns": 0,
+      "counters": {
+        "futex_enter": 1,
+        "wait_enter": 1,
+        "wait_exit": 1,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 1,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 4,
+      "alert_windows": [],
+      "recovery_observed": false,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "uncontended",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603216",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/uncontended/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-01/uncontended/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    },
+    {
+      "passed": true,
+      "scenario": "contention",
+      "pid": 603267,
+      "threads": 8,
+      "worker_tids": [
+        603271,
+        603272,
+        603273,
+        603274,
+        603275,
+        603276,
+        603277,
+        603278
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x5f38f3e9d020",
+      "mutex_size": 40,
+      "mutex_count": 1,
+      "matched_events": 8,
+      "long_waiters": 8,
+      "futex_addresses": [
+        "0x5f38f3e9d020"
+      ],
+      "max_duration_ns": 109222561,
+      "counters": {
+        "futex_enter": 21,
+        "wait_enter": 12,
+        "wait_exit": 12,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 12,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 5,
+      "alert_windows": [
+        {
+          "window_start_ns": 519254000000000,
+          "window_end_ns": 519255000000000,
+          "lock_addr": "0x5f38f3e9d020",
+          "event_count": 8,
+          "wait_count": 8,
+          "waiting_threads": 8,
+          "total_wait_ns": 838294807,
+          "avg_wait_ns": 104786850,
+          "max_wait_ns": 109222561,
+          "short_wait_count": 0,
+          "eagain_count": 0,
+          "timeout_count": 0,
+          "interrupted_count": 0,
+          "other_error_count": 0,
+          "waiting_tids": [
+            603271,
+            603272,
+            603273,
+            603274,
+            603275,
+            603276,
+            603277,
+            603278
+          ]
+        }
+      ],
+      "recovery_observed": true,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "contention",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603267",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/contention/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/contention/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    },
+    {
+      "passed": true,
+      "scenario": "uncontended",
+      "pid": 603318,
+      "threads": 8,
+      "worker_tids": [
+        603322,
+        603323,
+        603324,
+        603325,
+        603326,
+        603327,
+        603328,
+        603329
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x570bd23f4020",
+      "mutex_size": 40,
+      "mutex_count": 8,
+      "matched_events": 0,
+      "long_waiters": 0,
+      "futex_addresses": [],
+      "max_duration_ns": 0,
+      "counters": {
+        "futex_enter": 2,
+        "wait_enter": 2,
+        "wait_exit": 2,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 2,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 4,
+      "alert_windows": [],
+      "recovery_observed": false,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "uncontended",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603318",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/uncontended/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-02/uncontended/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    },
+    {
+      "passed": true,
+      "scenario": "contention",
+      "pid": 603369,
+      "threads": 8,
+      "worker_tids": [
+        603373,
+        603374,
+        603375,
+        603376,
+        603377,
+        603378,
+        603379,
+        603380
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x5a49a6488020",
+      "mutex_size": 40,
+      "mutex_count": 1,
+      "matched_events": 8,
+      "long_waiters": 8,
+      "futex_addresses": [
+        "0x5a49a6488020"
+      ],
+      "max_duration_ns": 108352287,
+      "counters": {
+        "futex_enter": 20,
+        "wait_enter": 11,
+        "wait_exit": 11,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 11,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 4,
+      "alert_windows": [
+        {
+          "window_start_ns": 519263000000000,
+          "window_end_ns": 519264000000000,
+          "lock_addr": "0x5a49a6488020",
+          "event_count": 8,
+          "wait_count": 8,
+          "waiting_threads": 8,
+          "total_wait_ns": 835240463,
+          "avg_wait_ns": 104405057,
+          "max_wait_ns": 108352287,
+          "short_wait_count": 0,
+          "eagain_count": 0,
+          "timeout_count": 0,
+          "interrupted_count": 0,
+          "other_error_count": 0,
+          "waiting_tids": [
+            603373,
+            603374,
+            603375,
+            603376,
+            603377,
+            603378,
+            603379,
+            603380
+          ]
+        }
+      ],
+      "recovery_observed": true,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "contention",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603369",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/contention/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/contention/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    },
+    {
+      "passed": true,
+      "scenario": "uncontended",
+      "pid": 603420,
+      "threads": 8,
+      "worker_tids": [
+        603424,
+        603425,
+        603426,
+        603427,
+        603428,
+        603429,
+        603430,
+        603431
+      ],
+      "hold_ms": 100,
+      "minimum_wait_ns": 50000000,
+      "mutex_addr": "0x6002008b5020",
+      "mutex_size": 40,
+      "mutex_count": 8,
+      "matched_events": 0,
+      "long_waiters": 0,
+      "futex_addresses": [],
+      "max_duration_ns": 0,
+      "counters": {
+        "futex_enter": 2,
+        "wait_enter": 2,
+        "wait_exit": 2,
+        "start_update_fail": 0,
+        "start_miss": 0,
+        "delete_fail": 0,
+        "ringbuf_drop": 0,
+        "bad_timestamp": 0,
+        "thread_exit_cleanup": 0,
+        "received": 2,
+        "rejected": 0
+      },
+      "errors": [],
+      "window_count": 5,
+      "alert_windows": [],
+      "recovery_observed": false,
+      "thresholds": {
+        "window_ns": 1000000000,
+        "minimum_wait_ns": 1000000,
+        "average_wait_threshold_ns": 10000000,
+        "max_wait_threshold_ns": 50000000,
+        "minimum_waiting_threads": 2,
+        "recovery_windows": 2
+      },
+      "workload_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_test",
+        "--scenario",
+        "uncontended",
+        "--threads",
+        "8",
+        "--hold-ms",
+        "100"
+      ],
+      "probe_command": [
+        "/home/bamboo/projects/kylinRCA/build/kylinrca_lock_probe_smoke",
+        "--pid",
+        "603420",
+        "--duration",
+        "30",
+        "--analyze",
+        "--object",
+        "/home/bamboo/projects/kylinRCA/build/lock.bpf.o"
+      ],
+      "workload_returncode": 0,
+      "probe_returncode": 0,
+      "probe_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/uncontended/probe.log",
+      "workload_log": "/tmp/kylinrca-w3-nYsGQb/lock/run-zuyudpoe/round-03/uncontended/workload.log",
+      "kernel": "6.18.58.1-microsoft-standard-WSL2",
+      "architecture": "x86_64"
+    }
+  ],
+  "interrupted": false
+}
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ sudo python3 scripts/check_io_analyzer.py \
+    --repeat 3 \
+    --output "$W3_RUN/io" \
+    2>&1 | tee "$W3_RUN/io.console.log"
+{"trial": 1, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"trial": 2, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"trial": 3, "passed": true, "alerts": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io"}
+{"passed": true, "requested_trials": 3, "output": "/tmp/kylinrca-w3-nYsGQb/io", "completed_trials": 3}
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ 
+bamboo@DESKTOP-IG5G792:~/projects/kylinRCA$ python3 - "$W3_RUN" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+lock_reports = list((root / "lock").glob("run-*/results.json"))
+assert len(lock_reports) == 1, "Lock 总结果缺失或数量异常"
+
+reports = [
+    ("CPU 全核压力", root / "cpu/full.json"),
+    ("CPU 超额竞争", root / "cpu/contention.json"),
+    ("Lock", lock_reports[0]),
+    ("I/O", root / "io/results.json"),
+]
+
+failed = []
+for name, path in reports:
+    data = json.loads(path.read_text())
+    passed = data.get("passed") is True
+    print(f"{name}: {'PASS' if passed else 'FAIL'}")
+    if not passed:
+        failed.append(name)
+
+print("结果目录：", root)
+raise SystemExit(1 if failed else 0)
+PY
+CPU 全核压力: PASS
+CPU 超额竞争: PASS
+Lock: PASS
+I/O: PASS
+结果目录： /tmp/kylinrca-w3-nYsGQb

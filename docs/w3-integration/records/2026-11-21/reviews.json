@@ -1,0 +1,18 @@
+[
+  {
+    "pr": 34,
+    "reviewer": "bamboooo1",
+    "state": "APPROVED",
+    "url": "https://github.com/bamboooo1/kylinRCA/pull/34#pullrequestreview-5993071198",
+    "submitted_at": "2026-11-20T12:59:16Z",
+    "commit": "07ef4ae04655541f4940e7c4d9ab7a840fdca6f4"
+  },
+  {
+    "pr": 35,
+    "reviewer": "cyyc03",
+    "state": "APPROVED",
+    "url": "https://github.com/bamboooo1/kylinRCA/pull/35#pullrequestreview-5992733330",
+    "submitted_at": "2026-11-20T12:35:47Z",
+    "commit": "c6148ad616894353ad1d96d74d34c4f1a3396db3"
+  }
+]

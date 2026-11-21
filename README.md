@@ -27,7 +27,8 @@ KylinRCA is currently developed and tested on:
 ```bash
 sudo apt install -y \
     git make cmake gcc g++ clang llvm \
-    bpftool libbpf-dev libelf-dev zlib1g-dev pkg-config
+    bpftool libbpf-dev libelf-dev zlib1g-dev pkg-config \
+    python3 stress-ng fio util-linux
 ```
 
 ### Generate vmlinux.h
@@ -49,10 +50,20 @@ Configure:
 cmake -S . -B build
 ```
 
-BUild:
+Build:
 ```bash
 cmake --build build
 ```
+
+## W3 四模块整合验收
+
+Syscall、CPU、Lock、I/O 的构建、运行顺序、通过标准和数据流见
+[W3 四模块整合验收](docs/w3_integration_validation.md)。
+
+2026-11-21 在最新 `main` 基线 `e694090` 完成 Debug 构建、CTest 18/18，
+以及 Syscall、两种 CPU 压力、三轮 Lock 竞争与对照、三轮 fio/BPF 实采。
+[本轮结果](docs/w3-integration/records/2026-11-21/summary.json)和原始记录已归档。
+这轮按模块依次运行；双方已有互审记录，数据流讲解仍需双方确认。
 
 ## CPU 链路修复与验证
 

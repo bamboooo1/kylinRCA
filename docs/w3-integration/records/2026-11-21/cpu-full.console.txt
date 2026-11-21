@@ -1,0 +1,34 @@
+{
+  "label": "full",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.19,
+  "samples": 30,
+  "hot_samples": 13,
+  "worker_pids": [
+    600490,
+    600491,
+    600492,
+    600493,
+    600494,
+    600495,
+    600496,
+    600497
+  ],
+  "alert_latency_seconds": 3.81779836,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 97.89831497471144,
+  "max_hot_bpf_percent": 99.96941653032886,
+  "max_usage_difference_pp": 1.149667036450083,
+  "log": "/tmp/kylinrca-w3-nYsGQb/cpu/full.log"
+}

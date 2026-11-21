@@ -2,7 +2,9 @@
 
 任务：[#26](https://github.com/bamboooo1/kylinRCA/issues/26)  
 日期：2026-11-19（Asia/Shanghai）  
-分支：`feat/io-fio-scenario`，基于包含 #25 的 `feat/io-analyzer`（`7d94b22`）。#25 的 PR #32 尚未合入，后续合并需保留该依赖。
+历史开发基线：`feat/io-fio-scenario`，基于包含 #25 的 `feat/io-analyzer`（`7d94b22`）。编写初始报告时 PR #32 尚未合入。
+PR #32 和 #34 现已合入 `main`；2026-11-21 的四模块回归、最新结果与构建步骤见
+[W3 四模块整合验收](w3_integration_validation.md)。下文保留 #26 开发期间的验收记录。
 
 ## 复现
 

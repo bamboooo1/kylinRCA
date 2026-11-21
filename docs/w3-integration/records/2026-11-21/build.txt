@@ -1,0 +1,78 @@
+[  1%] Generating syscall.bpf.o
+[  4%] Built target kylinrca_toolchain_smoke
+[  6%] Generating cpu.bpf.o
+[  6%] Built target cpu_bpf
+[  6%] Built target syscall_bpf
+[  7%] Building CXX object CMakeFiles/kylinrca_cpu_analyzer_smoke.dir/src/cpu_analyzer.cpp.o
+[  9%] Building CXX object CMakeFiles/kylinrca_syscall_analyzer_smoke.dir/src/syscall_analyzer.cpp.o
+[ 11%] Building CXX object CMakeFiles/kylinrca_syscall_analyzer_smoke.dir/tests/syscall_analyzer_smoke.cpp.o
+[ 12%] Building CXX object CMakeFiles/kylinrca_cpu_analyzer_smoke.dir/tests/cpu_analyzer_smoke.cpp.o
+[ 14%] Linking CXX executable kylinrca_syscall_analyzer_smoke
+[ 14%] Built target kylinrca_syscall_analyzer_smoke
+[ 15%] Building CXX object CMakeFiles/kylinrca_json_reporter_smoke.dir/src/json_reporter.cpp.o
+[ 17%] Linking CXX executable kylinrca_cpu_analyzer_smoke
+[ 17%] Built target kylinrca_cpu_analyzer_smoke
+[ 19%] Building CXX object CMakeFiles/kylinrca_cpu_probe_smoke.dir/src/cpu_analyzer.cpp.o
+[ 20%] Building CXX object CMakeFiles/kylinrca_json_reporter_smoke.dir/src/syscall_analyzer.cpp.o
+[ 22%] Building CXX object CMakeFiles/kylinrca_json_reporter_smoke.dir/tests/json_reporter_smoke.cpp.o
+[ 23%] Building CXX object CMakeFiles/kylinrca_cpu_probe_smoke.dir/tests/cpu_probe_test.cpp.o
+[ 25%] Linking CXX executable kylinrca_json_reporter_smoke
+[ 25%] Built target kylinrca_json_reporter_smoke
+[ 26%] Building CXX object CMakeFiles/kylinrca_cpu_rca_smoke.dir/src/cpu_analyzer.cpp.o
+[ 28%] Linking CXX executable kylinrca_cpu_probe_smoke
+[ 28%] Built target kylinrca_cpu_probe_smoke
+[ 33%] Built target kylinrca_proc_cpu_sampler_smoke
+[ 38%] Built target kylinrca_proc_cpu_sampler_stability
+[ 39%] Building CXX object CMakeFiles/kylinrca_cpu_runtime_smoke.dir/src/cpu_analyzer.cpp.o
+[ 41%] Building CXX object CMakeFiles/kylinrca_cpu_rca_smoke.dir/tests/cpu_rca_smoke.cpp.o
+[ 42%] Building CXX object CMakeFiles/kylinrca_cpu_runtime_smoke.dir/tests/cpu_runtime_smoke.cpp.o
+[ 44%] Linking CXX executable kylinrca_cpu_runtime_smoke
+[ 46%] Linking CXX executable kylinrca_cpu_rca_smoke
+[ 47%] Built target kylinrca_cpu_runtime_smoke
+[ 49%] Generating lock.bpf.o
+[ 50%] Built target kylinrca_cpu_rca_smoke
+[ 52%] Building CXX object CMakeFiles/kylinrca_lock_analysis.dir/src/lock_analyzer.cpp.o
+[ 53%] Building CXX object CMakeFiles/kylinrca_lock_analysis.dir/src/lock_json_reporter.cpp.o
+[ 53%] Built target lock_bpf
+[ 55%] Building CXX object CMakeFiles/kylinrca_syscall_pid_test.dir/tests/syscall_pid_test.cpp.o
+[ 57%] Linking CXX static library libkylinrca_lock_analysis.a
+[ 58%] Linking CXX executable kylinrca_syscall_pid_test
+[ 58%] Built target kylinrca_lock_analysis
+[ 60%] Building CXX object CMakeFiles/kylinrca_lock_wait_workload.dir/tests/lock_wait_workload.cpp.o
+[ 60%] Built target kylinrca_syscall_pid_test
+[ 61%] Building CXX object CMakeFiles/kylinrca_lock_test.dir/scenarios/lock_test.cpp.o
+[ 63%] Linking CXX executable kylinrca_lock_wait_workload
+[ 63%] Built target kylinrca_lock_wait_workload
+[ 65%] Generating io.bpf.o
+[ 66%] Linking CXX executable kylinrca_lock_test
+[ 66%] Built target kylinrca_lock_test
+[ 68%] Building CXX object CMakeFiles/kylinrca_io_analysis.dir/src/io_analyzer.cpp.o
+[ 68%] Built target io_bpf
+[ 69%] Building CXX object CMakeFiles/kylinrca_io_lifecycle_smoke.dir/tests/io_lifecycle_smoke.cpp.o
+[ 71%] Linking CXX executable kylinrca_io_lifecycle_smoke
+[ 73%] Building CXX object CMakeFiles/kylinrca_io_analysis.dir/src/io_json_reporter.cpp.o
+[ 73%] Built target kylinrca_io_lifecycle_smoke
+[ 74%] Building CXX object CMakeFiles/kylinrca_loader.dir/src/bpf_loader.cpp.o
+[ 76%] Linking CXX static library libkylinrca_io_analysis.a
+[ 76%] Built target kylinrca_io_analysis
+[ 77%] Building CXX object CMakeFiles/kylinrca_loader.dir/src/event_queue.cpp.o
+[ 79%] Building CXX object CMakeFiles/kylinrca_loader.dir/src/json_reporter.cpp.o
+[ 80%] Building CXX object CMakeFiles/kylinrca_loader.dir/src/ring_buffer_consumer.cpp.o
+[ 82%] Building CXX object CMakeFiles/kylinrca_loader.dir/src/syscall_analyzer.cpp.o
+[ 84%] Building CXX object CMakeFiles/kylinrca_lock_probe_smoke.dir/tests/lock_probe_test.cpp.o
+[ 85%] Linking CXX executable kylinrca_loader
+[ 85%] Built target kylinrca_loader
+[ 87%] Building CXX object CMakeFiles/kylinrca_lock_analyzer_smoke.dir/tests/lock_analyzer_smoke.cpp.o
+[ 88%] Linking CXX executable kylinrca_lock_probe_smoke
+[ 88%] Built target kylinrca_lock_probe_smoke
+[ 90%] Building CXX object CMakeFiles/kylinrca_io_probe_smoke.dir/tests/io_probe_smoke.cpp.o
+[ 92%] Linking CXX executable kylinrca_lock_analyzer_smoke
+[ 92%] Built target kylinrca_lock_analyzer_smoke
+[ 93%] Linking CXX executable kylinrca_io_probe_smoke
+[ 95%] Building CXX object CMakeFiles/kylinrca_io_rca_smoke.dir/tests/io_rca_smoke.cpp.o
+[ 95%] Built target kylinrca_io_probe_smoke
+[ 96%] Building CXX object CMakeFiles/kylinrca_io_analyzer_smoke.dir/tests/io_analyzer_smoke.cpp.o
+[ 98%] Linking CXX executable kylinrca_io_rca_smoke
+[100%] Linking CXX executable kylinrca_io_analyzer_smoke
+[100%] Built target kylinrca_io_analyzer_smoke
+[100%] Built target kylinrca_io_rca_smoke
