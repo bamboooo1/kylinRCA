@@ -1,0 +1,42 @@
+{
+  "label": "contention",
+  "passed": true,
+  "errors": [],
+  "elapsed_seconds": 32.124,
+  "samples": 30,
+  "hot_samples": 11,
+  "worker_pids": [
+    600838,
+    600839,
+    600840,
+    600841,
+    600842,
+    600843,
+    600844,
+    600845,
+    600846,
+    600847,
+    600848,
+    600849,
+    600850,
+    600851,
+    600852,
+    600853
+  ],
+  "alert_latency_seconds": 3.435489104,
+  "counters": {
+    "wakeup_update_fail": 0,
+    "wakeup_miss": 0,
+    "oncpu_update_fail": 0,
+    "oncpu_miss": 0,
+    "requeue_update_fail": 0,
+    "ringbuf_drop": 0,
+    "delete_fail": 0,
+    "bad_runqueue_timestamp": 0,
+    "bad_oncpu_timestamp": 0
+  },
+  "min_hot_bpf_percent": 49.52099903375968,
+  "max_hot_bpf_percent": 79.92304564498774,
+  "max_usage_difference_pp": 1.344500966240318,
+  "log": "/tmp/kylinrca-w3-nYsGQb/cpu/contention.log"
+}

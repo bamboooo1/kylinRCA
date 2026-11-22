@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "target_pid": 600135,
+  "tracer_pid": 599997,
+  "tracer_excluded": true,
+  "loader_detached": true,
+  "syscalls": {
+    "write": {
+      "id": 1,
+      "name": "write",
+      "count": 102,
+      "avg_duration_ns": 805,
+      "max_duration_ns": 26955,
+      "error_count": 0
+    },
+    "read": {
+      "id": 0,
+      "name": "read",
+      "count": 133,
+      "avg_duration_ns": 1910,
+      "max_duration_ns": 83927,
+      "error_count": 0
+    }
+  },
+  "identity_matched_calls": 6,
+  "self_filter_excluded_calls": 6,
+  "self_filter_child_calls": 2,
+  "source": "syscall.txt.gz"
+}

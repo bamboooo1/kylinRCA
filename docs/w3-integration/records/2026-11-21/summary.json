@@ -1,0 +1,368 @@
+{
+  "passed": true,
+  "date": "2026-11-21",
+  "timezone": "Asia/Shanghai",
+  "validation_kind": "real_bpf_capture",
+  "performed_by": "user",
+  "rechecked_from_saved_logs": true,
+  "source_directory": "/tmp/kylinrca-w3-nYsGQb",
+  "git_commit": "e694090a30b2d51e357651ff255708259cec837e",
+  "branch": "feat/w3-integration",
+  "source_worktree_clean": true,
+  "scope": {
+    "sequential_module_runs": true,
+    "concurrent_four_module_run": false,
+    "unified_daemon": false,
+    "arm64": false,
+    "physical_disk": false
+  },
+  "configure": {
+    "passed": true,
+    "build_type": "Debug"
+  },
+  "build": {
+    "passed": true
+  },
+  "ctest": {
+    "passed": true,
+    "passed_tests": 18,
+    "failed_tests": 0,
+    "tests": [
+      "syscall_analyzer",
+      "cpu_analyzer",
+      "cpu_runtime_window",
+      "json_reporter",
+      "lock_analyzer",
+      "lock_probe_help",
+      "lock_wait_workload",
+      "mutex_contention_workload",
+      "mutex_uncontended_workload",
+      "mutex_probe_validation",
+      "lock_json_reporter",
+      "lock_rca_validation",
+      "lock_rca_script_help",
+      "io_probe_help",
+      "io_analyzer",
+      "io_rca_help",
+      "io_request_lifecycle",
+      "io_fio_validation"
+    ]
+  },
+  "syscall": {
+    "passed": true,
+    "target_pid": 600135,
+    "tracer_pid": 599997,
+    "tracer_excluded": true,
+    "loader_detached": true,
+    "syscalls": {
+      "write": {
+        "id": 1,
+        "name": "write",
+        "count": 102,
+        "avg_duration_ns": 805,
+        "max_duration_ns": 26955,
+        "error_count": 0
+      },
+      "read": {
+        "id": 0,
+        "name": "read",
+        "count": 133,
+        "avg_duration_ns": 1910,
+        "max_duration_ns": 83927,
+        "error_count": 0
+      }
+    },
+    "identity_matched_calls": 6,
+    "self_filter_excluded_calls": 6,
+    "self_filter_child_calls": 2,
+    "source": "syscall.txt.gz"
+  },
+  "cpu": {
+    "full": {
+      "label": "full",
+      "passed": true,
+      "errors": [],
+      "elapsed_seconds": 32.19,
+      "samples": 30,
+      "hot_samples": 13,
+      "worker_pids": [
+        600490,
+        600491,
+        600492,
+        600493,
+        600494,
+        600495,
+        600496,
+        600497
+      ],
+      "alert_latency_seconds": 3.81779836,
+      "counters": {
+        "wakeup_update_fail": 0,
+        "wakeup_miss": 0,
+        "oncpu_update_fail": 0,
+        "oncpu_miss": 0,
+        "requeue_update_fail": 0,
+        "ringbuf_drop": 0,
+        "delete_fail": 0,
+        "bad_runqueue_timestamp": 0,
+        "bad_oncpu_timestamp": 0
+      },
+      "min_hot_bpf_percent": 97.89831497471144,
+      "max_hot_bpf_percent": 99.96941653032886,
+      "max_usage_difference_pp": 1.149667036450083,
+      "log": "/tmp/kylinrca-w3-nYsGQb/cpu/full.log"
+    },
+    "contention": {
+      "label": "contention",
+      "passed": true,
+      "errors": [],
+      "elapsed_seconds": 32.124,
+      "samples": 30,
+      "hot_samples": 11,
+      "worker_pids": [
+        600838,
+        600839,
+        600840,
+        600841,
+        600842,
+        600843,
+        600844,
+        600845,
+        600846,
+        600847,
+        600848,
+        600849,
+        600850,
+        600851,
+        600852,
+        600853
+      ],
+      "alert_latency_seconds": 3.435489104,
+      "counters": {
+        "wakeup_update_fail": 0,
+        "wakeup_miss": 0,
+        "oncpu_update_fail": 0,
+        "oncpu_miss": 0,
+        "requeue_update_fail": 0,
+        "ringbuf_drop": 0,
+        "delete_fail": 0,
+        "bad_runqueue_timestamp": 0,
+        "bad_oncpu_timestamp": 0
+      },
+      "min_hot_bpf_percent": 49.52099903375968,
+      "max_hot_bpf_percent": 79.92304564498774,
+      "max_usage_difference_pp": 1.344500966240318,
+      "log": "/tmp/kylinrca-w3-nYsGQb/cpu/contention.log"
+    }
+  },
+  "lock": {
+    "passed": true,
+    "rounds": 3,
+    "cases": [
+      {
+        "round": 1,
+        "scenario": "contention",
+        "pid": 603164,
+        "passed": true,
+        "matched_events": 8,
+        "recovery_observed": true,
+        "alert_windows": [
+          {
+            "window_start_ns": 519246000000000,
+            "window_end_ns": 519247000000000,
+            "lock_addr": "0x61209e3ce020",
+            "event_count": 8,
+            "wait_count": 8,
+            "waiting_threads": 8,
+            "total_wait_ns": 836335723,
+            "avg_wait_ns": 104541965,
+            "max_wait_ns": 108850331,
+            "short_wait_count": 0,
+            "eagain_count": 0,
+            "timeout_count": 0,
+            "interrupted_count": 0,
+            "other_error_count": 0,
+            "waiting_tids": [
+              603168,
+              603169,
+              603170,
+              603171,
+              603172,
+              603173,
+              603174,
+              603175
+            ]
+          }
+        ]
+      },
+      {
+        "round": 1,
+        "scenario": "uncontended",
+        "pid": 603216,
+        "passed": true,
+        "matched_events": 0,
+        "recovery_observed": false,
+        "alert_windows": []
+      },
+      {
+        "round": 2,
+        "scenario": "contention",
+        "pid": 603267,
+        "passed": true,
+        "matched_events": 8,
+        "recovery_observed": true,
+        "alert_windows": [
+          {
+            "window_start_ns": 519254000000000,
+            "window_end_ns": 519255000000000,
+            "lock_addr": "0x5f38f3e9d020",
+            "event_count": 8,
+            "wait_count": 8,
+            "waiting_threads": 8,
+            "total_wait_ns": 838294807,
+            "avg_wait_ns": 104786850,
+            "max_wait_ns": 109222561,
+            "short_wait_count": 0,
+            "eagain_count": 0,
+            "timeout_count": 0,
+            "interrupted_count": 0,
+            "other_error_count": 0,
+            "waiting_tids": [
+              603271,
+              603272,
+              603273,
+              603274,
+              603275,
+              603276,
+              603277,
+              603278
+            ]
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "scenario": "uncontended",
+        "pid": 603318,
+        "passed": true,
+        "matched_events": 0,
+        "recovery_observed": false,
+        "alert_windows": []
+      },
+      {
+        "round": 3,
+        "scenario": "contention",
+        "pid": 603369,
+        "passed": true,
+        "matched_events": 8,
+        "recovery_observed": true,
+        "alert_windows": [
+          {
+            "window_start_ns": 519263000000000,
+            "window_end_ns": 519264000000000,
+            "lock_addr": "0x5a49a6488020",
+            "event_count": 8,
+            "wait_count": 8,
+            "waiting_threads": 8,
+            "total_wait_ns": 835240463,
+            "avg_wait_ns": 104405057,
+            "max_wait_ns": 108352287,
+            "short_wait_count": 0,
+            "eagain_count": 0,
+            "timeout_count": 0,
+            "interrupted_count": 0,
+            "other_error_count": 0,
+            "waiting_tids": [
+              603373,
+              603374,
+              603375,
+              603376,
+              603377,
+              603378,
+              603379,
+              603380
+            ]
+          }
+        ]
+      },
+      {
+        "round": 3,
+        "scenario": "uncontended",
+        "pid": 603420,
+        "passed": true,
+        "matched_events": 0,
+        "recovery_observed": false,
+        "alert_windows": []
+      }
+    ]
+  },
+  "io": {
+    "passed": true,
+    "rounds": 3,
+    "threshold_us": 100,
+    "default_product_threshold_us": 10000,
+    "min_samples": 10,
+    "alert_consecutive_windows": 3,
+    "recovery_consecutive_windows": 3,
+    "trials": [
+      {
+        "round": 1,
+        "passed": true,
+        "device": "7:0",
+        "received": 106228,
+        "accepted_samples": 106228,
+        "late_events": 0,
+        "accepted_bytes": 13913841664,
+        "sampled_alert_windows": 3,
+        "persistent_alert_windows": 5,
+        "unmatched": 10,
+        "cleanup_complete": true
+      },
+      {
+        "round": 2,
+        "passed": true,
+        "device": "7:0",
+        "received": 87349,
+        "accepted_samples": 87348,
+        "late_events": 1,
+        "accepted_bytes": 11439202304,
+        "sampled_alert_windows": 3,
+        "persistent_alert_windows": 5,
+        "unmatched": 27,
+        "cleanup_complete": true
+      },
+      {
+        "round": 3,
+        "passed": true,
+        "device": "7:0",
+        "received": 77193,
+        "accepted_samples": 77193,
+        "late_events": 0,
+        "accepted_bytes": 10108166144,
+        "sampled_alert_windows": 3,
+        "persistent_alert_windows": 5,
+        "unmatched": 61,
+        "cleanup_complete": true
+      }
+    ]
+  },
+  "reviews": [
+    {
+      "pr": 34,
+      "reviewer": "bamboooo1",
+      "state": "APPROVED",
+      "url": "https://github.com/bamboooo1/kylinRCA/pull/34#pullrequestreview-5993071198",
+      "submitted_at": "2026-11-20T12:59:16Z",
+      "commit": "07ef4ae04655541f4940e7c4d9ab7a840fdca6f4"
+    },
+    {
+      "pr": 35,
+      "reviewer": "cyyc03",
+      "state": "APPROVED",
+      "url": "https://github.com/bamboooo1/kylinRCA/pull/35#pullrequestreview-5992733330",
+      "submitted_at": "2026-11-20T12:35:47Z",
+      "commit": "c6148ad616894353ad1d96d74d34c4f1a3396db3"
+    }
+  ],
+  "mutual_data_flow_explanation": "pending_human_confirmation"
+}
