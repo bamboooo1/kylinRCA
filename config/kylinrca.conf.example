@@ -1,0 +1,20 @@
+# 一行一个 key=value，区分大小写；使用无 BOM 的 UTF-8。
+# 支持空行和整行 # 注释，不支持行尾注释、引号、分节、环境变量展开和重复键。
+# 省略字段使用默认值；显式指定却打不开的文件会报错。
+
+# 最低日志等级：debug/info/warn/error。
+log_level=info
+
+# 路径型 Unix Socket 的绝对路径；这里只校验地址表示，不创建 Socket。
+socket_path=/run/kylinrca/kylinrca.sock
+
+# 分析窗口毫秒数，整数范围 1..60000。
+window_ms=1000
+
+# 模块开关只接受 true/false。
+enable_syscall=true
+enable_cpu=true
+enable_lock=true
+enable_io=true
+
+# 当前演示只实际应用 log_level，其他字段待 daemon 集成。

@@ -375,3 +375,27 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME io_fio_validation
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/io_fio_validation_test.py)
 endif()
+
+# W4 配置与日志模块：可独立构建，无需生成或加载 BPF 对象。
+add_library(kylinrca_config STATIC src/config_manager.cpp)
+target_include_directories(kylinrca_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(kylinrca_config PRIVATE -Wall -Wextra -Werror)
+
+# PUBLIC 使使用 Logger 的目标继承头文件路径及平台线程依赖。
+add_library(kylinrca_logger STATIC src/logger.cpp)
+target_include_directories(kylinrca_logger PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_logger PUBLIC Threads::Threads)
+target_compile_options(kylinrca_logger PRIVATE -Wall -Wextra -Werror)
+
+add_executable(kylinrca_config_demo tests/config_demo.cpp)
+target_link_libraries(kylinrca_config_demo PRIVATE kylinrca_config kylinrca_logger)
+target_compile_options(kylinrca_config_demo PRIVATE -Wall -Wextra -Werror)
+
+add_executable(kylinrca_config_test tests/config_manager_test.cpp)
+target_link_libraries(kylinrca_config_test PRIVATE kylinrca_config)
+target_compile_options(kylinrca_config_test PRIVATE -Wall -Wextra -Werror)
+
+# 解析校验和实际文件读取分别注册为 CTest 用例。
+add_test(NAME config_manager COMMAND kylinrca_config_test)
+add_test(NAME config_example COMMAND kylinrca_config_demo
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/kylinrca.conf.example)
