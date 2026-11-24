@@ -510,3 +510,16 @@ void CpuAnalyzer::update_responsibility_evidence(
         }
     }
 }
+const char* cpu_diagnosis_state_name(CpuDiagnosisState state)
+{
+    switch (state) {
+    case CpuDiagnosisState::Normal:
+        return "NORMAL";
+    case CpuDiagnosisState::HighUsage:
+        return "CPU_HIGH_USAGE";
+    case CpuDiagnosisState::RunqueuePressure:
+        return "CPU_RUNQUEUE_PRESSURE";
+    }
+
+    return "UNKNOWN";
+}

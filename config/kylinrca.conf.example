@@ -15,6 +15,5 @@ window_ms=1000
 enable_syscall=true
 enable_cpu=true
 enable_lock=true
+# I/O 开关和 Socket 路径将在对应模块接入后使用。
 enable_io=true
-
-# 当前演示只实际应用 log_level，其他字段待 daemon 集成。

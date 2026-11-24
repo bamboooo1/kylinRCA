@@ -77,7 +77,7 @@ sudo ./build/kylinrca_syscall_pid_test \
 终端一启动 loader，等出现 `Collecting syscall events...`：
 
 ```bash
-sudo ./build/kylinrca_loader 2>&1 | tee -i "$W3_RUN/syscall.log"
+sudo ./build/bpf_loader 2>&1 | tee -i "$W3_RUN/syscall.log"
 ```
 
 终端二执行真实读写，打印并记住本轮 PID：

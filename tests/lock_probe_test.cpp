@@ -3,15 +3,14 @@
     收到事件后，它先检查版本、类型和长度，再打印字段；--analyze 同时输出窗口诊断。
     输出格式类似：
     [LOCK] timestamp_ns=… pid=4200 tid=4202 lock_addr=0x… futex_op=128 duration_ns=6000000 ret=0*/
-#include "lock_probe.h"
+#include "lock_bpf_config.h"
+#include "tracer_bpf_config.h"
 #include "lock_analyzer.h"
 #include "json_reporter.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/futex.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -166,31 +165,6 @@ int handle_event(void* opaque, void* data, size_t size)
     return 0;
 }
 
-/*	获取当前 PID 命名空间标识，把观测程序 PID、目标 PID、futex 编号等配置写入内核 Map。*/
-bool configure(bpf_object* object, uint32_t target_pid)
-{
-    struct stat info {};
-    if (stat("/proc/self/ns/pid", &info) != 0)
-        return false;
-    bpf_map* config_map = bpf_object__find_map_by_name(object, "config_map");
-    bpf_map* lock_map = bpf_object__find_map_by_name(object, "lock_config");
-    if (!config_map || !lock_map)
-        return false;
-
-    const uint32_t key = 0;
-    const uint32_t tracer_pid = static_cast<uint32_t>(getpid());
-    const kylinrca_lock_config config {
-        static_cast<__u64>(info.st_ino),
-        SYS_futex,
-        target_pid,
-        FUTEX_WAIT,
-        FUTEX_WAIT_BITSET,
-        static_cast<__u32>(FUTEX_CMD_MASK)
-    };
-    return bpf_map_update_elem(bpf_map__fd(config_map), &key, &tracer_pid, BPF_ANY) == 0 &&
-           bpf_map_update_elem(bpf_map__fd(lock_map), &key, &config, BPF_ANY) == 0;
-}
-
 /*读取 lock_stats，把每个 CPU 的计数相加，打印各统计项的总数。*/
 bool print_stats(bpf_object* object)
 {
@@ -269,7 +243,8 @@ int main(int argc, char** argv)
         return 1;
     }
     // 将自身 PID、目标 PID、命名空间和 futex 参数写入配置 Map。
-    if (!configure(session.object, options.pid)) {
+    if (!configure_tracer_pid(session.object) ||
+        !configure_lock_probe(session.object, options.pid)) {
         std::cerr << "Cannot configure lock probe: " << std::strerror(errno) << '\n';
         return 1;
     }
