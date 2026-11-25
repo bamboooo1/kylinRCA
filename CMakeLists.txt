@@ -111,28 +111,28 @@ add_custom_target(
 )
 
 add_executable(
-    kylinrca_loader
+    bpf_loader
     src/bpf_loader.cpp
     src/event_queue.cpp
     src/ring_buffer_consumer.cpp
     src/syscall_analyzer.cpp
     src/json_reporter.cpp
-) #让cmake创造一个叫kylinrca_loader的程序，源码是src/bpf_loader.cpp,src/event_queue.cpp
+) # 构建以 src/bpf_loader.cpp 为入口的独立 Syscall 采集程序。
 
 add_dependencies(
-    kylinrca_loader
+    bpf_loader
     syscall_bpf
-) # 想构建 kylinrca_loader，必须先把 syscall_bpf 构建出来。
+) # 构建 bpf_loader 前先生成 syscall.bpf.o。
 
 target_include_directories(
-	kylinrca_loader
+	bpf_loader
 	PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/include) # 告诉includecmake去哪儿找头文件
 
 target_link_libraries(
-	kylinrca_loader 
+	bpf_loader
 	PRIVATE 
-	PkgConfig::LIBBPF)#给叫kylinrca_loader的程序链接PkgConfig::LIBBPF库
+	PkgConfig::LIBBPF)
 
 add_executable(
     kylinrca_syscall_analyzer_smoke
@@ -197,6 +197,7 @@ add_dependencies(
 add_executable(
     kylinrca_cpu_rca_smoke
     tests/cpu_rca_smoke.cpp
+    src/cpu_usage_sampler.cpp
     src/cpu_analyzer.cpp
     src/proc_cpu_sampler.cpp
 )
@@ -399,3 +400,28 @@ target_compile_options(kylinrca_config_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME config_manager COMMAND kylinrca_config_test)
 add_test(NAME config_example COMMAND kylinrca_config_demo
     ${CMAKE_CURRENT_SOURCE_DIR}/config/kylinrca.conf.example)
+
+add_executable(kylinrcad
+    src/kylinrcad.cpp
+    src/event_queue.cpp
+    src/ring_buffer_consumer.cpp
+    src/syscall_analyzer.cpp
+    src/cpu_analyzer.cpp
+    src/cpu_usage_sampler.cpp
+    src/proc_cpu_sampler.cpp
+    src/json_reporter.cpp
+    src/cpu_json_reporter.cpp)
+target_link_libraries(kylinrcad PRIVATE
+    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_config kylinrca_logger)
+target_compile_options(kylinrcad PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(kylinrcad PRIVATE
+    KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}"
+    KYLINRCA_CPU_BPF_OBJECT="${CPU_BPF_OBJECT}"
+    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}")
+add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf)
+
+add_executable(kylinrca_event_queue_test tests/event_queue_test.cpp src/event_queue.cpp)
+target_include_directories(kylinrca_event_queue_test PRIVATE include)
+target_link_libraries(kylinrca_event_queue_test PRIVATE Threads::Threads)
+add_test(NAME daemon_event_queue COMMAND kylinrca_event_queue_test)
+set_tests_properties(daemon_event_queue PROPERTIES TIMEOUT 5)

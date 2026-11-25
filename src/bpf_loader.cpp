@@ -2,6 +2,7 @@
 #include "ring_buffer_consumer.h"
 #include "syscall_analyzer.h"
 #include "syscall_bpf_config.h"
+#include "tracer_bpf_config.h"
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -52,32 +53,13 @@ int main()
     }
     std::cout << "Successfully loaded BPF object into kernel" << std::endl;
 
-    // 4. 找到 config_map
-    struct bpf_map* config_map =  bpf_object__find_map_by_name(obj, "config_map");
-    if (config_map == nullptr) {
-        std::cerr << "Failed to find BPF map: config_map" << std::endl;
-        bpf_object__close(obj);
-        return 1;
-    }
-
-    int config_map_fd = bpf_map__fd(config_map);
-    if (config_map_fd < 0) {
-        std::cerr << "Failed to get config_map fd" << std::endl;
-        bpf_object__close(obj);
-        return 1;
-    }
-
-    // config_map[0] = 当前 tracer 自己的 PID
-    __u32 config_key = 0;
-    __u32 tracer_pid = static_cast<__u32>(getpid());
-
-    if (bpf_map_update_elem(config_map_fd, &config_key, &tracer_pid, BPF_ANY) != 0) {
+    if (!configure_tracer_pid(obj)) {
         std::cerr << "Failed to write tracer PID to config_map: " << std::strerror(errno) << std::endl;
         bpf_object__close(obj);
         return 1;
     }
 
-    std::cout << "Tracer PID configured: " << tracer_pid << std::endl;
+    std::cout << "Tracer PID configured: " << getpid() << std::endl;
 
     // 在挂载前配置编号所属的命名空间，禁止混用内核 PID 与用户态 PID。
     if (!configure_syscall_namespace(obj)) {
@@ -140,7 +122,7 @@ int main()
         auto last_cleanup = std::chrono::steady_clock::now();
 
         // 9. 让用户态 Consumer 监听 BPF 中的 events RingBuffer
-        if (!consumer.init(obj)) {
+        if (!consumer.add(obj)) {
             std::cerr << "Failed to initialize RingBuffer consumer" << std::endl;
 
             result = 1;
@@ -163,11 +145,9 @@ int main()
                     break;
                 }
 
-                // handle_event() 已经把这些事件 push 到 EventQueue
-                // 现在再交给 Analyzer
-                for (int i = 0; i < event_count; ++i) {
-                    syscall_event event = queue.pop();
-                    analyzer.process(event);
+                while (auto event = queue.try_pop()) {
+                    if (const auto* syscall = std::get_if<syscall_event>(&*event))
+                        analyzer.process(*syscall);
                 }
 
                  // ---------- 新增：周期清理 ----------

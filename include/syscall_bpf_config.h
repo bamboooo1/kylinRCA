@@ -6,6 +6,9 @@
 #include <sys/stat.h>
 
 // 把采集程序所在的 PID 命名空间告诉 BPF，让事件编号与用户态一致。
+// 比如同一个进程，在宿主机上看到的 PID 是 3500，在容器里看到的是 12。
+// 如果 daemon 跑在容器里，探针就应该报告 12，这样日志里的 PID 才能和 daemon 看到的进程对上。
+// 这套编号所属的范围，就叫 PID 命名空间。
 inline bool configure_syscall_namespace(bpf_object* object)
 {
     struct stat info {};

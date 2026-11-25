@@ -1,4 +1,6 @@
 #include "cpu_runtime_sampler.h"
+#include "cpu_usage_sampler.h"
+#include "tracer_bpf_config.h"
 #include "cpu_bpf_config.h"
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -6,16 +8,13 @@
 #include "cpu_analyzer.h"
 #include "cpu_probe_stats.h"
 #include "event.h"
-#include "proc_cpu_sampler.h"
 
-#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <unordered_map>
 #include <vector>
 
 #include <unistd.h>
@@ -31,25 +30,6 @@ volatile sig_atomic_t running = 1;
 void handle_signal(int)
 {
     running = 0;
-}
-
-/*
- * 将 CpuAnalyzer 内部枚举转换成终端可读文本；这里只负责显示，
- * 不参与状态判断。
- */
-const char* diagnosis_state_name(
-    CpuDiagnosisState state)
-{
-    switch (state) {
-    case CpuDiagnosisState::Normal:
-        return "NORMAL";
-    case CpuDiagnosisState::HighUsage:
-        return "CPU_HIGH_USAGE";
-    case CpuDiagnosisState::RunqueuePressure:
-        return "CPU_RUNQUEUE_PRESSURE";
-    }
-
-    return "UNKNOWN";
 }
 
 /*
@@ -154,166 +134,6 @@ bool parse_positive_int(
 }
 
 /*
- * 用前后两次全系统线程快照生成本轮进程和线程 CPU 使用率。
- *
- * 新建或已经退出的线程缺少完整前后样本，本轮跳过；下一轮拥有完整
- * 基线后即可参与排名。进程使用率是其有效线程使用率之和。
- */
-std::vector<CpuProcessUsageObservation>
-build_process_observations(
-    const ThreadCpuStatMap& previous,
-    const ThreadCpuStatMap& current,
-    double elapsed_seconds,
-    long clock_ticks)
-{
-    /*
-     * processes 保存最终交给 CpuAnalyzer 的进程级结果。
-     *
-     * process_indexes 保存“PID -> processes 下标”，用于把多个 TID
-     * 快速汇总到同一个进程，避免每遇到一个线程就线性查找 vector。
-     */
-    std::vector<CpuProcessUsageObservation> processes;
-    std::unordered_map<uint32_t, std::size_t>
-        process_indexes;
-
-    /*
-     * current 的 key 是 TID，value 是该线程当前累计的 utime/stime。
-     * 这里逐个线程计算本轮增量。
-     */
-    for (const auto& [tid, current_thread] : current) {
-        const auto previous_it =
-            previous.find(tid); // 在 previous 里找同一个 TID
-
-        /*
-         * 当前快照中新出现的线程没有上一轮基线，无法计算差值；
-         * 本轮跳过，下一轮它就会拥有完整的前后样本。
-         */
-        if (previous_it == previous.end())
-            continue;
-
-        // calculate_thread_cpu_usage() 会把 tick 差换算成百分比。
-        double thread_usage = 0.0;
-
-        if (!calculate_thread_cpu_usage(
-                previous_it->second,
-                current_thread,
-                elapsed_seconds,
-                clock_ticks,
-                thread_usage)) //计算线程使用率
-            continue;
-
-        /*
-         * current_thread.pid 是线程组 ID（TGID），同一进程内所有
-         * 线程拥有相同 PID，但各自的 TID 不同。
-         */
-        const uint32_t pid = static_cast<uint32_t>(current_thread.pid);
-        // tracer 自身已在 BPF 侧过滤，也不应出现在 /proc 热点排名中。
-        if (pid == static_cast<uint32_t>(getpid()))
-            continue; //获取线程所属进程PID
-
-        /* 
-         *第一次遇到某个 PID 时，
-         *在 processes 中创建对应的进程统计对象，
-         *并记录这个对象位于 processes 的哪个下标。
-         * index_it：指向 Map 中对应元素的迭代器
-         * inserted：这次是否真的插入了新元素
-         */
-        auto [index_it, inserted] =
-            process_indexes.emplace(
-                pid,
-                processes.size());
-
-        if (inserted) {
-            /*
-             * inserted == true 表示这个 PID 第一次出现。此时
-             * processes.size() 就是新对象即将占用的下标。
-             */
-            CpuProcessUsageObservation process;
-            process.pid = pid;
-            processes.push_back(
-                std::move(process));
-        }
-
-        /*
-         * 无论 PID 是刚插入还是以前已经出现，index_it->second 都是
-         * 它在 processes 中的下标。引用 process 后可直接累加。
-         */
-        CpuProcessUsageObservation& process =
-            processes[index_it->second];
-
-        /*
-         * 线程组 leader 的 comm 最适合作为进程名；leader 本轮没有
-         * 有效差分样本时，退化为第一个有效线程名。
-         */
-        if (process.comm.empty() ||
-            current_thread.tid ==
-                current_thread.pid)
-            process.comm = current_thread.comm;
-
-        /*
-         * Linux 进程 CPU 使用率等于其线程使用率之和，所以多线程
-         * 进程的结果可以超过 100%。
-         */
-        process.process_usage_percent +=
-            thread_usage;
-
-        /*
-         * 除了累加进程总量，还保留每个线程的 TID、名称和使用率，
-         * CpuAnalyzer 才能从最高使用率进程中继续选择责任线程。
-         */
-        CpuThreadUsageObservation thread;
-        thread.tid =
-            static_cast<uint32_t>(
-                current_thread.tid);
-        thread.comm = current_thread.comm;
-        thread.usage_percent = thread_usage;
-        thread.runtime_valid = calculate_runtime_delta(
-            previous_it->second, current_thread,
-            thread.runtime_ns, thread.runtime_window_ns);
-        thread.runtime_uncertainty_ns = previous_it->second.bpf_uncertainty_ns
-                                      + current_thread.bpf_uncertainty_ns;
-
-        // 把线程明细放进它所属进程的 threads 列表。
-        process.threads.push_back(
-            std::move(thread));
-    }
-
-    /*
-     * 排序不是 CpuAnalyzer 正确性的必要条件，但可以让调试输出和后续
-     * Reporter 的 Top-N 结果保持稳定。
-     */
-    /*
-     * 先把每个进程内部的线程按 CPU 使用率从高到低排序，
-     * threads.front() 因而就是该进程最忙的线程。
-     */
-    for (CpuProcessUsageObservation& process :
-         processes) {
-        std::sort(
-            process.threads.begin(),
-            process.threads.end(),
-            [](const auto& left, const auto& right) {
-                return left.usage_percent >
-                       right.usage_percent;
-            });
-    }
-
-    /*
-     * 再把所有进程按总 CPU 使用率从高到低排序。CpuAnalyzer 本身
-     * 仍会比较数值，不依赖排序，但该顺序方便未来直接输出 Top-N。
-     */
-    std::sort(
-        processes.begin(),
-        processes.end(),
-        [](const auto& left, const auto& right) {
-            return left.process_usage_percent >
-                   right.process_usage_percent;
-        });
-
-    // 返回“进程 -> 线程明细”的完整本轮观测结果。
-    return processes;
-}
-
-/*
  * 统一销毁已经 attach 的 BPF link。
  *
  * link 存活就表示程序仍挂载在内核 hook 上，因此错误路径和正常退出
@@ -329,26 +149,6 @@ void destroy_links(
 }
 
 /* 将丢事件、非法时间与 Map 写入失败转为本轮压力证据的质量标记。 */
-bool read_cpu_probe_errors(bpf_object* object, uint64_t& total)
-{
-    bpf_map* map = bpf_object__find_map_by_name(object, "cpu_stats");
-    const int cpus = libbpf_num_possible_cpus();
-    if (!map || cpus <= 0)
-        return false;
-    const uint32_t keys[] = {CPU_STAT_RINGBUF_DROP, CPU_STAT_BAD_RUNQUEUE_TIMESTAMP,
-        CPU_STAT_BAD_ONCPU_TIMESTAMP, CPU_STAT_WAKEUP_UPDATE_FAIL,
-        CPU_STAT_ONCPU_UPDATE_FAIL, CPU_STAT_REQUEUE_UPDATE_FAIL};
-    std::vector<uint64_t> values(cpus);
-    total = 0;
-    for (const uint32_t key : keys) {
-        if (bpf_map_lookup_elem(bpf_map__fd(map), &key, values.data()) != 0)
-            return false;
-        for (uint64_t value : values)
-            total += value;
-    }
-    return true;
-}
-
 /*
  * PERCPU_ARRAY 的每个 key 在每个 possible CPU 上都有一个 64 位值。
  * 必须一次提供全部 CPU 的空间；只传一个整数会导致缓冲区越界。
@@ -446,45 +246,6 @@ int main(
     }
 
     /*
-     * CPU 使用率必须通过两次累计值做差计算：
-     * previous_system 保存上一轮 /proc/stat；
-     * previous_threads 保存上一轮所有 /proc/<pid>/task/<tid>/stat。
-     */
-    CpuStatSample previous_system;
-    ThreadCpuStatMap previous_threads;
-
-    // 建立第一轮系统和线程基线；任一快照完全失败都无法继续计算。
-    if (!read_system_cpu_stat(previous_system) ||
-        !read_all_thread_cpu_stats(
-            previous_threads)) {
-        std::cerr
-            << "Cannot read initial system CPU snapshot"
-            << std::endl;
-        return 1;
-    }
-
-    /*
-     * 时间基线必须紧跟初始 /proc 快照，确保线程 tick 增量和时间分母
-     * 覆盖同一个区间。BPF 初始化耗时也会同时进入分子和分母。
-     */
-    auto previous_sample_time =
-        std::chrono::steady_clock::now();
-
-    /*
-     * /proc 的 utime/stime 单位是 tick。_SC_CLK_TCK 表示一秒包含
-     * 多少 tick，用于将线程 tick 增量换算成 CPU 秒。
-     */
-    const long clock_ticks =
-        sysconf(_SC_CLK_TCK);
-
-    if (clock_ticks <= 0) {
-        std::cerr
-            << "Cannot read _SC_CLK_TCK"
-            << std::endl;
-        return 1;
-    }
-
-    /*
      * analyzer 同时接收两条数据流：
      * 1. RingBuffer 中的全系统调度事件；
      * 2. 每秒一次的全系统 /proc CPU 使用率观测。
@@ -526,41 +287,8 @@ int main(
         return 1;
     }
 
-    /*
-     * config_map 用来把当前观测程序的 PID 传给 BPF，从源头过滤
-     * tracer 自己产生的调度事件。
-     */
-    bpf_map* config_map =
-        bpf_object__find_map_by_name(
-            object,
-            "config_map");
-
-    if (config_map == nullptr) {
-        std::cerr
-            << "Missing config_map"
-            << std::endl;
-        bpf_object__close(object);
-        return 1;
-    }
-
-    // config_map 是单元素配置 Map，固定使用 key 0。
-    const uint32_t config_key = 0;
-    const uint32_t tracer_pid =
-        static_cast<uint32_t>(getpid());
-
-    /*
-     * 把观测程序 PID 写入 BPF Map，避免 RingBuffer 消费造成新的
-     * 调度事件并形成自观测反馈。
-     */
-    if (bpf_map_update_elem(
-            bpf_map__fd(config_map),
-            &config_key,
-            &tracer_pid,
-            BPF_ANY) != 0) {
-        std::cerr
-            << "Failed to configure tracer PID: "
-            << std::strerror(errno)
-            << std::endl;
+    if (!configure_tracer_pid(object)) {
+        std::cerr << "Failed to configure tracer PID: " << std::strerror(errno) << '\n';
         bpf_object__close(object);
         return 1;
     }
@@ -627,30 +355,15 @@ int main(
         return 1;
     }
 
-    bpf_map* runtime_map = bpf_object__find_map_by_name(object, "runtime_map");
-    const int runtime_fd = runtime_map ? bpf_map__fd(runtime_map) : -1;
-    if (runtime_fd < 0) {
+    CpuUsageSampler sampler;
+    if (!sampler.start(object)) {
+        std::cerr << "Cannot establish CPU snapshot baseline\n";
         ring_buffer__free(ring);
         destroy_links(links);
         bpf_object__close(object);
         return 1;
     }
-    const ThreadSnapshotHook runtime_hook = [runtime_fd](ThreadCpuStatSample& sample) {
-        read_cpu_runtime(runtime_fd, sample);
-    };
-    // BPF 已挂载后重新建立基线，不能把加载前的 /proc 区间与加载后的 BPF 比较。
-    if (!read_system_cpu_stat(previous_system) ||
-        !read_all_thread_cpu_stats(previous_threads, runtime_hook)) {
-        ring_buffer__free(ring);
-        destroy_links(links);
-        bpf_object__close(object);
-        return 1;
-    }
-    previous_sample_time = std::chrono::steady_clock::now();
 
-    uint64_t previous_probe_errors = 0;
-    read_cpu_probe_errors(object, previous_probe_errors);
-    uint64_t previous_window_end = cpu_monotonic_ns();
     int result = 0;
 
     // Ctrl+C 和 SIGTERM 都走正常退出路径，保证 BPF 被解除挂载。
@@ -658,8 +371,7 @@ int main(
     std::signal(SIGTERM, handle_signal);
 
     /*
-     * started 只负责判断整个测试运行时长；previous_sample_time
-     * 负责 CPU 差分区间，两者含义不同，不能混用。
+     * started 用于判断本次测试运行时长。
      */
     const auto started =
         std::chrono::steady_clock::now();
@@ -719,91 +431,21 @@ int main(
         if (poll_time < next_sample_time)
             continue;
 
-        /*
-         * current_* 是本轮新快照，与 previous_* 做差后得到这一秒的
-         * 系统、进程和线程 CPU 使用率。
-         */
-        CpuStatSample current_system;
-        ThreadCpuStatMap current_threads;
-
-        if (!read_system_cpu_stat(
-                current_system) ||
-            !read_all_thread_cpu_stats(
-                current_threads, runtime_hook)) {
-            std::cerr
-                << "Cannot read current system CPU snapshot"
-                << std::endl;
+        std::optional<CpuUsageObservation> observation;
+        if (!sampler.sample(observation)) {
+            std::cerr << "Cannot read current system CPU snapshot\n";
             result = 1;
             break;
         }
+        const auto sampled_at = std::chrono::steady_clock::now();
 
-        /*
-         * 线程 tick 来自刚完成的 /proc 快照，因此在快照之后记录时间，
-         * 避免分母短于 tick 的实际统计区间。
-         */
-        const auto current_sample_time =
-            std::chrono::steady_clock::now();
-
-        /*
-         * 实际间隔不保证刚好等于 1 秒，因此必须使用单调时钟计算真实
-         * 秒数，不能在公式中写死 1.0。
-         */
-        const double elapsed_seconds =
-            std::chrono::duration<double>(
-                current_sample_time -
-                previous_sample_time)
-                .count();
-
-        // 保存 /proc/stat 前后差分得到的系统总体 CPU 百分比。
-        double system_usage = 0.0;
-
-        /*
-         * 系统累计值有效时才构造 observation；如果计数回退或总增量
-         * 为 0，本轮跳过诊断，但仍会推进下一轮快照。
-         */
-        if (calculate_system_cpu_usage(
-                previous_system,
-                current_system,
-                system_usage)) {
-            /*
-             * observation 是 /proc sampler 与 CpuAnalyzer 的数据边界：
-             * sampler 只负责计算，analyzer 只负责阈值和责任归因。
-             */
+        if (observation) {
             // 扫描期间积压的事件也先消费，再按事件时间过滤归窗。
             if (ring_buffer__consume(ring) < 0) {
                 result = 1;
                 break;
             }
-            CpuUsageObservation observation;
-            // 保存与本轮快照对应的单调时钟纳秒时间戳。
-            observation.timestamp_ns = cpu_monotonic_ns();
-            observation.window_start_ns = previous_window_end;
-            previous_window_end = observation.timestamp_ns;
-            // 系统使用率决定系统级 HighUsage 是否满足触发条件。
-            uint64_t current_probe_errors = 0;
-            observation.scheduling_evidence_valid =
-                read_cpu_probe_errors(object, current_probe_errors) &&
-                current_probe_errors == previous_probe_errors;
-            previous_probe_errors = current_probe_errors;
-            observation.has_runtime_snapshots = true;
-            observation.system_usage_percent =
-                system_usage;
-            /*
-             * 将线程快照差分并按 PID 汇总，生成：
-             * 每个进程总使用率 + 该进程所有线程使用率。
-             */
-            observation.processes =
-                build_process_observations(
-                    previous_threads,
-                    current_threads,
-                    elapsed_seconds,
-                    clock_ticks);
-
-            /*
-             * process_usage() 将 /proc 使用率与此前累计的 BPF 窗口
-             * 合并，更新状态、责任 PID/TID 和调度证据，然后清空窗口。
-             */
-            analyzer.process_usage(observation);
+            analyzer.process_usage(*observation);
 
             // 获取只读诊断结果，下面仅负责把字段打印到终端。
             const CpuDiagnosis& diagnosis =
@@ -819,7 +461,7 @@ int main(
                 << "[CPU RCA]"
                 << " sample_ns=" << cpu_monotonic_ns()
                 << " state="
-                << diagnosis_state_name(
+                << cpu_diagnosis_state_name(
                     diagnosis.state)
                 << " system="
                 << diagnosis.system_usage_percent
@@ -857,18 +499,7 @@ int main(
                 << std::endl;
         }
 
-        /*
-         * 当前快照完成诊断后变成下一轮基线。current_threads 使用
-         * move 转移大量线程记录，避免复制整个全系统快照。
-         */
-        previous_system = current_system;
-        previous_threads =
-            std::move(current_threads);
-        previous_sample_time =
-            current_sample_time;
-        next_sample_time =
-            current_sample_time +
-            std::chrono::seconds(1);
+        next_sample_time = sampled_at + std::chrono::seconds(1);
 
         /*
          * 清理已经退出且 60 秒没有新 BPF 事件的 TID，防止生命周期

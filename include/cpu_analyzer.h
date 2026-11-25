@@ -129,6 +129,8 @@ enum class CpuDiagnosisState {
 };
 
 
+const char* cpu_diagnosis_state_name(CpuDiagnosisState state);
+
 /*
  * CpuAnalyzer 的可配置阈值。
  *

@@ -5,6 +5,7 @@
 #include <bpf/bpf.h>
 #include <time.h>
 
+/*向系统读取单调时钟，返回纳秒值*/
 inline uint64_t cpu_monotonic_ns()
 {
     timespec now {};

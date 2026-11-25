@@ -42,7 +42,7 @@ sudo ./build/kylinrca_syscall_pid_test
 终端一在工程根目录启动：
 
 ```bash
-sudo ./build/kylinrca_loader | tee -i /tmp/kylinrca-syscall-fixed.log
+sudo ./build/bpf_loader | tee -i /tmp/kylinrca-syscall-fixed.log
 ```
 
 `tee -i` 忽略 Ctrl+C，让 loader 收到停止信号后仍能把最终 JSON 写入日志。普通 `tee` 可能与 loader 同时退出，造成日志只有启动信息、缺少最终报告。

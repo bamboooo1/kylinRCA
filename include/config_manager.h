@@ -12,8 +12,8 @@ namespace kylinrca {
 // 值类型：每次解析先建立候选配置，成功后一次性返回。
 struct AppConfig {
     LogLevel log_level = LogLevel::Info;
-    std::string socket_path = "/run/kylinrca/kylinrca.sock";
-    std::uint32_t window_ms = 1000;
+    std::string socket_path = "/run/kylinrca/kylinrca.sock"; //设定本机 CLI 和 daemon 通信时使用的 Socket 路径。
+    std::uint32_t window_ms = 1000; //默认每隔约 1 秒采样一次 CPU，Lock 也按 1 秒划分统计窗口。
     bool enable_syscall = true;
     bool enable_cpu = true;
     bool enable_lock = true;

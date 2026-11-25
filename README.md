@@ -55,6 +55,33 @@ Build:
 cmake --build build
 ```
 
+## W4 统一采集进程
+
+构建后启动 `kylinrcad`，默认同时挂载 Syscall、CPU、Lock 探针：
+
+```bash
+sudo ./build/kylinrcad > /tmp/kylinrcad.json
+```
+
+可用 `--config config/kylinrca.conf.example` 设置模块开关、CPU 采样与
+Lock 的窗口时长、日志等级。至少启用一个采集模块。采集结果写到标准输出，
+运行日志走标准错误。
+CPU 和 Lock 按窗口输出 `cpu_summary` 和 `lock_summary`，Syscall 在退出时输出
+`syscall_summary`。各报告都是独立 JSON 文档，可用 `jq` 逐份读取。
+
+看到 `[daemon] Ready` 后，可以在另一个终端用真实负载验证三条链路：
+
+```bash
+sh -c 'echo "Syscall PID=$$"; exec cat /proc/self/status >/dev/null'
+stress-ng --cpu "$(nproc)" --timeout 12s &
+./build/kylinrca_lock_test --scenario contention --threads 8 --auto
+wait
+```
+
+等待几个窗口让告警恢复后，在 daemon 终端按 Ctrl+C。检查 Syscall 的目标
+PID 统计、CPU 的热点与 runtime 有效性、Lock 的竞争 PID/地址及恢复。
+SIGINT 和 SIGTERM 都会解除挂载、排空队列并等待分析线程退出。
+
 ## W3 四模块整合验收
 
 Syscall、CPU、Lock、I/O 的构建、运行顺序、通过标准和数据流见
