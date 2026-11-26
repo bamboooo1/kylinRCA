@@ -401,6 +401,13 @@ add_test(NAME config_manager COMMAND kylinrca_config_test)
 add_test(NAME config_example COMMAND kylinrca_config_demo
     ${CMAKE_CURRENT_SOURCE_DIR}/config/kylinrca.conf.example)
 
+add_library(kylinrca_socket STATIC
+    src/daemon_snapshot.cpp
+    src/unix_socket_server.cpp)
+target_include_directories(kylinrca_socket PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(kylinrca_socket PUBLIC Threads::Threads)
+target_compile_options(kylinrca_socket PRIVATE -Wall -Wextra -Werror)
+
 add_executable(kylinrcad
     src/kylinrcad.cpp
     src/event_queue.cpp
@@ -412,7 +419,8 @@ add_executable(kylinrcad
     src/json_reporter.cpp
     src/cpu_json_reporter.cpp)
 target_link_libraries(kylinrcad PRIVATE
-    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_config kylinrca_logger)
+    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_config kylinrca_logger
+    kylinrca_socket)
 target_compile_options(kylinrcad PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(kylinrcad PRIVATE
     KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}"
@@ -425,3 +433,18 @@ target_include_directories(kylinrca_event_queue_test PRIVATE include)
 target_link_libraries(kylinrca_event_queue_test PRIVATE Threads::Threads)
 add_test(NAME daemon_event_queue COMMAND kylinrca_event_queue_test)
 set_tests_properties(daemon_event_queue PROPERTIES TIMEOUT 5)
+
+if(Python3_Interpreter_FOUND)
+    add_executable(kylinrca_socket_fixture
+        tests/socket_server_fixture.cpp
+        src/syscall_analyzer.cpp
+        src/cpu_analyzer.cpp
+        src/json_reporter.cpp
+        src/cpu_json_reporter.cpp)
+    target_link_libraries(kylinrca_socket_fixture PRIVATE kylinrca_socket kylinrca_lock_analysis)
+    target_compile_options(kylinrca_socket_fixture PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME daemon_socket
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/socket_server_test.py
+            $<TARGET_FILE:kylinrca_socket_fixture>)
+    set_tests_properties(daemon_socket PROPERTIES TIMEOUT 20)
+endif()

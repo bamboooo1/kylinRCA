@@ -82,6 +82,31 @@ wait
 PID 统计、CPU 的热点与 runtime 有效性、Lock 的竞争 PID/地址及恢复。
 SIGINT 和 SIGTERM 都会解除挂载、排空队列并等待分析线程退出。
 
+### 查询运行中的 daemon（Issue #38）
+
+daemon 在 `socket_path`（默认 `/run/kylinrca/kylinrca.sock`）接收
+`status`、`top`、`report` 查询。分析线程每个窗口保存新快照，查询线程读取快照。
+默认 Socket 权限为 `0600`；使用 `sudo` 启动 daemon 后，查询也使用 `sudo`。
+
+保持上面的 daemon 运行，在另一个终端执行以下命令；把 `status` 改成 `top`
+或 `report` 可以查询热点或已有分析结果。这段 Python 仅发送请求，不启动采集：
+
+```bash
+sudo python3 - status <<'PY'
+import json, socket, sys
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    connection.settimeout(3)
+    connection.connect('/run/kylinrca/kylinrca.sock')
+    connection.sendall((sys.argv[1] + '\n').encode())
+    with connection.makefile('rb') as response:
+        print(json.dumps(json.loads(response.readline()), indent=2, ensure_ascii=False))
+PY
+```
+
+`top` 每模块最多返回 10 个热点，包含各自的窗口起止时间；首次窗口尚未完成时
+相应结果为 `null`。`status` 的事件计数和窗口数应随运行继续增长。
+协议、字段、排序、路径清理和本地验收步骤见 [Socket 查询说明](docs/daemon_socket.md)。
+
 ## W3 四模块整合验收
 
 Syscall、CPU、Lock、I/O 的构建、运行顺序、通过标准和数据流见

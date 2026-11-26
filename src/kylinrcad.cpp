@@ -2,12 +2,14 @@
 #include "cpu_bpf_config.h"
 #include "cpu_runtime_sampler.h"
 #include "cpu_usage_sampler.h"
+#include "daemon_snapshot.h"
 #include "json_reporter.h"
 #include "lock_analyzer.h"
 #include "lock_bpf_config.h"
 #include "ring_buffer_consumer.h"
 #include "syscall_bpf_config.h"
 #include "tracer_bpf_config.h"
+#include "unix_socket_server.h"
 
 #include <algorithm>
 #include <atomic>
@@ -81,9 +83,11 @@ struct Probe {
     }
 };
 
-void analyze(EventQueue& queue, const AppConfig& config, uint64_t started_ns)
+void analyze(EventQueue& queue, const AppConfig& config, uint64_t started_ns,
+             SnapshotStore& snapshots)
 {
     SyscallAnalyzer syscalls;
+    SyscallAnalyzer window_syscalls;
     CpuAnalyzer cpu;
     LockAnalyzerConfig lock_config;
     lock_config.window_ns = uint64_t{config.window_ms} * 1'000'000;
@@ -99,27 +103,32 @@ void analyze(EventQueue& queue, const AppConfig& config, uint64_t started_ns)
         }
     };
 
-    uint64_t cpu_events = 0;
+    AnalysisProgress progress;
+    progress.started_ns = started_ns;
+    progress.updated_ns = started_ns;
     auto next_syscall_cleanup = std::chrono::steady_clock::now() + 60s; //把第一次清理 Syscall 统计的时间定在 60 秒后    
     while (auto event = queue.wait_pop()) {
         if (const auto* syscall = std::get_if<syscall_event>(&*event)) {
             syscalls.process(*syscall);
+            window_syscalls.process(*syscall);
+            ++progress.syscall_events;
         } else if (const auto* schedule = std::get_if<cpu_event>(&*event)) {
             cpu.process(*schedule);
-            ++cpu_events;
+            ++progress.cpu_events;
         } else if (const auto* lock = std::get_if<kylinrca_lock_event>(&*event)) {
             locks.process(*lock);
+            ++progress.lock_events;
             report_lock_window();
         } else {
             const auto& tick = std::get<AnalysisTick>(*event);
             if (tick.cpu) {
-                cpu.process_usage(*tick.cpu);
+                cpu.process_usage(*tick.cpu); //这个函数先根据本轮数据更新诊断结果，然后清空window_stats_.clear();
                 std::cout << JsonReporter::report_cpu(cpu.diagnosis(), tick.cpu->window_start_ns,
-                                                     tick.cpu->timestamp_ns, cpu_events) << std::flush;
+                                                     tick.cpu->timestamp_ns, progress.cpu_events) << std::flush;
                 cpu.cleanup_exited_threads(60s);
             }
             if (config.enable_lock) {
-                locks.advance_window(tick.timestamp_ns);
+                locks.advance_window(tick.timestamp_ns); //查是否跨过了窗口边界。需要结算时，它会调用 finish_window()
                 report_lock_window();
             }
             const auto now = std::chrono::steady_clock::now();
@@ -127,6 +136,14 @@ void analyze(EventQueue& queue, const AppConfig& config, uint64_t started_ns)
                 syscalls.cleanup_exited_processes(60s);
                 next_syscall_cleanup = now + 60s;
             }
+            progress.window_start_ns = progress.updated_ns;
+            progress.updated_ns = tick.timestamp_ns;
+            ++progress.completed_windows;
+            const CpuUsageObservation empty_cpu_window;
+            // 把结果送进查询服务使用的同一个仓库
+            snapshots.publish(make_daemon_snapshot(config, progress, syscalls, window_syscalls,
+                              tick.cpu ? *tick.cpu : empty_cpu_window, cpu, locks));
+            window_syscalls = SyscallAnalyzer{}; //清空本轮syscalls统计
         }
     }
 
@@ -182,7 +199,20 @@ int run(const AppConfig& config)
 
     const auto window = std::chrono::milliseconds(config.window_ms);
     auto next_tick = std::chrono::steady_clock::now() + window;
-    std::thread worker([&] { analyze(queue, config, started_ns); });
+    AnalysisProgress initial_progress; //制作“刚启动时的第一张照片”。刚启动时，第一个窗口还没结束，但查询服务已经需要回答：“我正在运行，这些模块已开启，目前完成了 0 个窗口。”
+    initial_progress.started_ns = started_ns;
+    initial_progress.updated_ns = started_ns;
+    SnapshotStore snapshots(make_daemon_snapshot(config, initial_progress,
+                            SyscallAnalyzer{}, SyscallAnalyzer{}, CpuUsageObservation{},
+                            CpuAnalyzer{}, LockAnalyzer{}));
+    UnixSocketServer query_server(config.socket_path, snapshots);
+    try {
+        query_server.start();
+    } catch (const std::exception& error) {
+        runtime_log.log(LogLevel::Error, "socket", error.what());
+        return 1;
+    }
+    std::thread worker([&] { analyze(queue, config, started_ns, snapshots); });
     runtime_log.log(LogLevel::Info, "daemon", "Ready");
 
     int result = 0;
@@ -217,6 +247,7 @@ int run(const AppConfig& config)
         next_tick = std::chrono::steady_clock::now() + window;
     }
 
+    query_server.stop();
     syscall_probe.detach();
     cpu_probe.detach();
     lock_probe.detach();

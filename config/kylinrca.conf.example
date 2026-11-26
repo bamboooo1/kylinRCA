@@ -5,7 +5,7 @@
 # 最低日志等级：debug/info/warn/error。
 log_level=info
 
-# 路径型 Unix Socket 的绝对路径；这里只校验地址表示，不创建 Socket。
+# 路径型 Unix Socket 的绝对路径；daemon 创建父目录和 Socket，权限为 0600。
 socket_path=/run/kylinrca/kylinrca.sock
 
 # 分析窗口毫秒数，整数范围 1..60000。
@@ -15,5 +15,5 @@ window_ms=1000
 enable_syscall=true
 enable_cpu=true
 enable_lock=true
-# I/O 开关和 Socket 路径将在对应模块接入后使用。
+# I/O 开关将在 I/O 接入统一 daemon 后使用；目前 status 中 io 为 false。
 enable_io=true
