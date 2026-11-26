@@ -12,7 +12,7 @@ static kylinrca_io_event event(uint64_t t, uint64_t d, unsigned minor=1) {
     e.bytes=4096; e.operation=IO_OP_WRITE; return e;
 }
 int main() {
-    // All protocol checks live in the analyzer and contribute to its report.
+    // 协议字段统一由分析器校验，错误同时进入窗口报告与运行累计计数。
     IoAnalyzer validation(1000);
     for (int field = 0; field < 7; ++field) {
         auto bad = event(2000, 1);
@@ -32,17 +32,20 @@ int main() {
     auto validation_report = validation.finish_window(3000);
     check(validation_report.invalid_events == 7 && validation_report.late_events == 1);
     check(validation_report.devices.size() == 1 && validation_report.devices[0].count == 1);
+    check(validation.counters().invalid == 7 && validation.counters().late == 1);
+    check(validation.counters().received == 2 && validation.counters().bytes == 8192);
     IoAnalyzer bounded(1000, {1, 1, 1, 1, 1});
     check(bounded.process_detailed(event(2000, 1)) == IoProcessResult::Accepted);
     check(bounded.process_detailed(event(2001, 1)) == IoProcessResult::CapacityDropped);
     check(bounded.finish_window(3000).capacity_drops == 1);
+    check(bounded.counters().received == 2 && bounded.counters().capacity_drops == 1);
     IoAnalyzer a(1000, {95, 10, 100, 2, 100000, 1, 1}); // 单窗口模式只用于原有指标测试
     for (unsigned i=1;i<=100;++i) check(a.process(event(2000+i,i)));
     auto other=event(2101,10,2); other.status=1; check(a.process(other));
     check(!a.process(event(1000,1)));
     auto bad=event(2200,1); bad.header.version=99; check(!a.process(bad));
-    check(!a.process(event(2200,1))); // bounded capacity
-    check(!a.process(event(2200,1,3))); // bounded devices
+    check(!a.process(event(2200,1))); // 超过单设备样本容量，应拒收并计数。
+    check(!a.process(event(2200,1,3))); // 超过设备跟踪容量，应拒收并计数。
     auto r=a.finish_window(3000);
     check(r.devices.size()==2 && r.late_events==1 && r.invalid_events==1 && r.capacity_drops==2);
     auto s=r.devices[0];

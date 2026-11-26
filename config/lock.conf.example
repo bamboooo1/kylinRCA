@@ -1,0 +1,10 @@
+# Lock 模块配置，通过 --lock-config 传入；省略字段保留现有默认值。
+# 下列时间单位为微秒，均为正 uint32，要求最短等待 <= 平均等待阈值 <= 最大等待阈值。
+minimum_wait_us=1000
+average_wait_threshold_us=10000
+max_wait_threshold_us=50000
+# 明显等待的不同线程至少为 2，不能用单线程等待证明锁竞争。
+minimum_waiting_threads=2
+# 连续正常或空窗口达到此数后恢复，必须为正 uint32。
+recovery_windows=2
+# 窗口长度使用公共配置的 window_ms，不在模块文件中重复定义。

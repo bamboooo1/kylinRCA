@@ -52,7 +52,7 @@ void Logger::log(LogLevel level,
         return;
     }
 
-    //记录事件发生的事件
+    //记录事件发生的时间
     const auto now = std::chrono::system_clock::now();
     const std::time_t seconds =
         std::chrono::system_clock::to_time_t(now);

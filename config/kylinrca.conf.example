@@ -15,5 +15,10 @@ window_ms=1000
 enable_syscall=true
 enable_cpu=true
 enable_lock=true
-# I/O 开关和 Socket 路径将在对应模块接入后使用。
+# I/O 已接入统一 daemon。
 enable_io=true
+
+# 模块专用参数分别传入，省略时保留已有默认值：
+# --cpu-config config/cpu.conf.example
+# --lock-config config/lock.conf.example
+# --io-config config/io.conf.example

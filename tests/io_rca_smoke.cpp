@@ -42,8 +42,7 @@ static int receive(void *ctx, void *data, size_t size)
         return 0;
     }
     std::memcpy(&e, data, sizeof(e));
-    // All event-field validation belongs to the analyzer. Late/capacity
-    // rejections are still valid received events, not malformed records.
+    // 分析器统一检查事件字段；因迟到或容量限制拒收的仍是合法接收记录，不能混作格式错误。
     const auto result = c.analyzer.process_detailed(e);
     if (result == IoProcessResult::Invalid) {
         ++c.invalid;
@@ -58,6 +57,9 @@ static int receive(void *ctx, void *data, size_t size)
                   << " op=" << e.operation << " bytes=" << e.bytes
                   << " sector=" << e.sector << " duration_ns=" << e.duration_ns
                   << " status=" << e.status << " pid=0 tid=0\n";
+    // 事件处理可能跨过窗口，及时取走已结算报告；输出职责仍属于采集入口。
+    for (const auto& report : c.analyzer.take_reports())
+        std::cout << JsonReporter::report_io(report) << std::endl;
     return 0;
 }
 
@@ -160,6 +162,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    analyzer_config.window_ns = uint64_t{window_ms} * 1000000;
     consumer.analyzer = IoAnalyzer(now_ns(), analyzer_config);
     btf *types = btf__load_vmlinux_btf();
     if (libbpf_get_error(types) || !types) {
@@ -228,14 +231,13 @@ int main(int argc, char **argv)
         std::signal(SIGTERM, stop);
         std::cerr << "READY io_rca seconds=" << seconds << std::endl;
         auto end = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
-        uint64_t last_report = now_ns();
         while (running && std::chrono::steady_clock::now() < end) {
             err = ring_buffer__poll(rb, 10);
             auto cutoff = now_ns();
-            if (cutoff - last_report >= uint64_t(window_ms) * 1000000) {
-                std::cout << JsonReporter::report_io(consumer.analyzer.finish_window(cutoff)) << std::endl;
-                last_report = cutoff;
-            }
+            // 分析器管理固定窗口，主循环只负责通知时间并输出结算结果。
+            consumer.analyzer.advance_window(cutoff);
+            for (const auto& report : consumer.analyzer.take_reports())
+                std::cout << JsonReporter::report_io(report) << std::endl;
             if (err < 0 && err != -EINTR) {
                 std::cerr << "RingBuffer poll failed: " << err << "\n";
                 result = 1; break;
@@ -243,8 +245,11 @@ int main(int argc, char **argv)
         }
     } while (false);
     cleanup();
-    if (!links.empty())
-        std::cout << JsonReporter::report_io(consumer.analyzer.finish_window(now_ns(), false)) << std::endl;
+    if (!links.empty()) {
+        consumer.analyzer.flush(now_ns());
+        for (const auto& report : consumer.analyzer.take_reports())
+            std::cout << JsonReporter::report_io(report) << std::endl;
+    }
 
     if (!links.empty()) {
         const char *names[] = {"issue", "complete", "partial", "requeue",
