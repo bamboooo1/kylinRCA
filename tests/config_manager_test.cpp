@@ -27,7 +27,7 @@ void rejects(const std::string& text, const std::string& expected)
     throw std::runtime_error("invalid config accepted: " + text);
 }
 
-} // namespace
+} // 本文件测试辅助函数命名空间结束
 
 // 覆盖默认值、合法输入、错误校验，以及解析失败时旧配置不被覆盖。
 int main()
@@ -78,6 +78,11 @@ int main()
         rejects("socket_path=/" + std::string(107, 'a'), "sun_path");
         rejects(std::string("socket_path=/tmp/a\0b", 20), "NUL"); // 显式长度保留内嵌空字节。
         rejects("[daemon]\nlog_level=info", "expected key=value");
+
+        // 公共配置不接收模块专用参数，防止 CPU、Lock、I/O 的规则再次平铺到 AppConfig。
+        for (const auto* key : {"io_threshold_us", "io_min_samples", "io_device",
+                                "high_usage_threshold_percent", "minimum_wait_us", "recovery_windows"})
+            rejects(std::string(key) + "=1", "unknown key");
 
         // 模拟底层读取故障；logic_error 不会被预期的 runtime_error 分支吞掉。
         std::istringstream broken("");

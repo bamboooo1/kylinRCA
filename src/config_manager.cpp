@@ -78,7 +78,7 @@ void validate_socket(const std::string& value, std::size_t line)
     }
 }
 
-} // namespace
+} // 本文件辅助函数命名空间结束
 
 // 打开指定文件并解析；出错时补充文件路径，显式指定的文件打不开就报错。
 AppConfig ConfigManager::load(const std::string& path)
@@ -155,4 +155,4 @@ AppConfig ConfigManager::parse(std::istream& input)
     return candidate;
 }
 
-} // namespace kylinrca
+} // kylinrca 命名空间结束

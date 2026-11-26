@@ -401,8 +401,16 @@ add_test(NAME config_manager COMMAND kylinrca_config_test)
 add_test(NAME config_example COMMAND kylinrca_config_demo
     ${CMAKE_CURRENT_SOURCE_DIR}/config/kylinrca.conf.example)
 
+# CPU、Lock、I/O 的模块规则独立于公共配置，共用基础文本校验。
+add_library(kylinrca_module_config STATIC src/cpu_config.cpp src/lock_config.cpp src/io_config.cpp)
+target_include_directories(kylinrca_module_config PUBLIC include)
+target_compile_options(kylinrca_module_config PRIVATE -Wall -Wextra -Werror)
+
+# 统一进程编入 I/O 探针配置读取和窗口链路，复用已有 I/O 分析库并依赖四类 BPF 对象。
 add_executable(kylinrcad
     src/kylinrcad.cpp
+    src/io_probe_reader.cpp
+    src/io_snapshot.cpp
     src/event_queue.cpp
     src/ring_buffer_consumer.cpp
     src/syscall_analyzer.cpp
@@ -412,16 +420,46 @@ add_executable(kylinrcad
     src/json_reporter.cpp
     src/cpu_json_reporter.cpp)
 target_link_libraries(kylinrcad PRIVATE
-    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_config kylinrca_logger)
+    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_io_analysis kylinrca_config kylinrca_logger kylinrca_module_config)
 target_compile_options(kylinrcad PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(kylinrcad PRIVATE
     KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}"
     KYLINRCA_CPU_BPF_OBJECT="${CPU_BPF_OBJECT}"
-    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}")
-add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf)
+    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}"
+    KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
+add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf io_bpf)
 
 add_executable(kylinrca_event_queue_test tests/event_queue_test.cpp src/event_queue.cpp)
 target_include_directories(kylinrca_event_queue_test PRIVATE include)
 target_link_libraries(kylinrca_event_queue_test PRIVATE Threads::Threads)
 add_test(NAME daemon_event_queue COMMAND kylinrca_event_queue_test)
 set_tests_properties(daemon_event_queue PROPERTIES TIMEOUT 5)
+
+# 无特权链路回归：检查事件分发、窗口归属、恢复、尾窗和快照，不挂载 BPF。
+add_executable(kylinrca_io_daemon_test tests/io_daemon_test.cpp
+    src/io_snapshot.cpp src/io_probe_reader.cpp src/event_queue.cpp)
+target_include_directories(kylinrca_io_daemon_test PRIVATE include)
+target_link_libraries(kylinrca_io_daemon_test PRIVATE kylinrca_io_analysis Threads::Threads PkgConfig::LIBBPF)
+target_compile_options(kylinrca_io_daemon_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME daemon_io_analyzer COMMAND kylinrca_io_daemon_test)
+set_tests_properties(daemon_io_analyzer PROPERTIES TIMEOUT 10)
+
+
+# 模块配置与公共配置分开验证；不需要加载内核探针。
+add_executable(kylinrca_io_config_test tests/io_config_test.cpp)
+target_link_libraries(kylinrca_io_config_test PRIVATE kylinrca_module_config)
+target_include_directories(kylinrca_io_config_test PRIVATE include)
+target_compile_options(kylinrca_io_config_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME io_module_config COMMAND kylinrca_io_config_test)
+
+# 配置回归同时检查字段校验和 CPU/Lock 诊断行为，不加载内核探针。
+add_executable(kylinrca_cpu_lock_config_test tests/cpu_lock_config_test.cpp
+    src/cpu_analyzer.cpp src/cpu_json_reporter.cpp)
+target_link_libraries(kylinrca_cpu_lock_config_test PRIVATE kylinrca_module_config kylinrca_lock_analysis)
+target_compile_options(kylinrca_cpu_lock_config_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME cpu_lock_module_config COMMAND kylinrca_cpu_lock_config_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/cpu.conf.example ${CMAKE_CURRENT_SOURCE_DIR}/config/lock.conf.example)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME daemon_module_config_options
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/daemon_config_options_test.py $<TARGET_FILE:kylinrcad>)
+endif()

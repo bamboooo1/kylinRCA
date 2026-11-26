@@ -3,6 +3,7 @@
 #include "event.h"
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
 
 // 设置分析规则和容量限制
@@ -14,6 +15,7 @@ struct IoAnalyzerConfig {
     std::size_t max_total_samples = 100000; //所有设备合计最多保存 100000 个样本
     std::size_t alert_consecutive_windows = 3; //连续三个异常窗口才触发
     std::size_t recovery_consecutive_windows = 3; //连续三个正常或空窗口才恢复
+    uint64_t window_ns = 1'000'000'000; // 窗口长度；daemon 使用公共窗口设置覆盖，分析器负责实际推进。
 };
 
 //保存一个设备在一个窗口内的统计结果
@@ -45,20 +47,40 @@ struct IoReport {
     std::size_t alert_consecutive_windows = 3, recovery_consecutive_windows = 3;
     bool window_complete = true;
 };
-// Rejection reasons remain distinct for callers and window statistics.
+// 区分拒收原因，供调用方检查单条事件，也分别累计到窗口报告和运行计数。
 enum class IoProcessResult { Accepted, Invalid, Late, CapacityDropped };
 
+// 从启动起的接收和拒收累计计数，与每窗口清空的设备统计分开保存。
+struct IoCounters {
+    uint64_t received = 0, invalid = 0, late = 0, capacity_drops = 0;
+    uint64_t reads = 0, writes = 0, bytes = 0;
+};
+
+// 由调用方所属的分析线程独占，管理事件归属、设备聚合、连续告警、空窗口恢复和退出尾窗。
+// 不访问 BPF、不输出 JSON，也不持有共享快照；这些工作由 daemon 或独立采集入口完成。
 class IoAnalyzer {
 public:
-    explicit IoAnalyzer(uint64_t start_ns, IoAnalyzerConfig config = {});//输入当前窗口开始的时间以及使用的配置
+    // 设置首窗起点和模块规则，拒绝零窗口、零阈值或零容量；初始时还没有结算报告。
+    explicit IoAnalyzer(uint64_t start_ns, IoAnalyzerConfig config = {});
+    // 接收一条完成事件，必要时先结算已结束的窗口，再按设备聚合；返回是否成功进入统计。
     bool process(const kylinrca_io_event& event);
+    // 与 process 执行相同处理，但区分无效、迟到和超容量；字段不合法时不使用其时间推进窗口。
     IoProcessResult process_detailed(const kylinrca_io_event& event);
-    // Consume only events <= end_ns before finishing; end_ns must advance.
-    // Delayed events from a closed window are counted and rejected.
-    // 退出时的不足整窗报告传 false：输出数据，但不增加异常或恢复计数。
+    // 按单调时钟推进所有完整窗口，包括没有事件的空窗口；过期时间不会使窗口倒退。
+    // 结算结果暂存在分析器中，由调用方在处理事件或推进后立即通过 take_reports 取走。
+    bool advance_window(uint64_t timestamp_ns);
+    // 停止采集并排空事件后调用：结算完整窗口，再保存不足整窗的尾部；尾窗不改变异常或恢复次数。
+    bool flush(uint64_t timestamp_ns);
+    // 取走自上次读取后结算的全部报告，保留每个空窗口的恢复证据；本函数不负责输出。
+    std::vector<IoReport> take_reports();
+    // 读取最近结算报告和从启动起的累计计数，供 daemon 构造共享状态副本。
+    const std::optional<IoReport>& report() const { return report_; }
+    const IoCounters& counters() const { return counters_; }
+    // 保留已有手动结算接口，供独立指标回归指定截止时间并直接取得结果；不会加入待输出报告列表。
+    // end_ns 必须晚于当前起点；调用方应先消费属于该截止时间的事件，迟到记录不回写旧窗口。
     IoReport finish_window(uint64_t end_ns, bool complete = true);
 private:
-    //为每个设备准备一个桶。请求到达后，把延迟放进 durations，把延迟加到 total_ns，再更新 stats 中的请求数、bytes 等统计。
+    // 保存一个设备当前窗口的样本、总耗时和基本计数，结算时计算平均值与分位数。
     struct Bucket {
         IoStats stats;
         long double total_ns = 0;
@@ -66,9 +88,12 @@ private:
     };
     uint64_t start_;
     IoAnalyzerConfig config_;
-    std::map<uint64_t, Bucket> buckets_; //用于保存没有出现窗口异常的设备（统计状态）
-    std::map<uint64_t, IoDiagnosis> states_; //用于保存出现过窗口异常的设备，需要跨窗口保留；正常且无连续异常的设备会删除（诊断状态）
+    std::map<uint64_t, Bucket> buckets_; // 当前窗口样本；每次结算后清空。
+    std::map<uint64_t, IoDiagnosis> states_; // 跨窗口连续异常和恢复状态；与当前样本分开保留。
     uint64_t invalid_ = 0, late_ = 0, dropped_ = 0;
     std::size_t samples_ = 0;
+    IoCounters counters_; // 运行累计值不随窗口清空，包含合法接收但因迟到或容量不足拒收的记录。
+    std::optional<IoReport> report_;
+    std::vector<IoReport> reports_; // 调用方每次处理后取走，避免输出或快照职责进入分析器。
 };
 #endif

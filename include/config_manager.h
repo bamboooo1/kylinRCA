@@ -18,6 +18,7 @@ struct AppConfig {
     bool enable_cpu = true;
     bool enable_lock = true;
     bool enable_io = true;
+
 };
 
 class ConfigManager {
@@ -31,6 +32,6 @@ public:
     static AppConfig parse(std::istream& input);
 };
 
-} // namespace kylinrca
+} // kylinrca 命名空间结束
 
 #endif
