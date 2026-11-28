@@ -1,8 +1,7 @@
 # daemon 统一快照与 Socket 查询（Issue #38）
 
-`kylinrcad` 统一采集 Syscall、CPU、Lock、I/O。另一个程序通过 Unix Domain Socket
-查询状态、热点和已有报告。正式 `kylinrca status/top/report` CLI 属于 Issue #39，
-本轮使用 README 中的 Python 查询示例和统一 daemon 验收入口。
+`kylinrcad` 统一采集 Syscall、CPU、Lock、I/O。`kylinrca_client` 通过 Unix Domain Socket
+查询状态、热点和已有报告。启动和查询命令见 [README](../README.md#查询运行中的-daemon)。
 
 ## 职责与数据流
 
@@ -144,6 +143,7 @@ I/O 共存与开关模式，以及共用的查询、连续 JSON 解析和采样�
 
    daemon_integration 覆盖四模块查询、窗口与累计区分、告警恢复、尾窗、健康计数、
    模块禁用、配置生效、非法/分段请求、提前断开、8MiB 响应、慢客户端发布与路径清理。
+   同一测试核对 `kylinrca_client` 的三个查询与 Socket 快照一致，并检查客户端报错和退出码。
    合成事件不代表真实 BPF 实采已通过。
 
 2. 完整实采，默认包括三轮隔离 fio：
@@ -168,9 +168,9 @@ I/O 共存与开关模式，以及共用的查询、连续 JSON 解析和采样�
    sudo python3 scripts/check_daemon.py --suite modes
    ```
 
-4. 手动双终端：终端 1 运行 sudo ./build/kylinrcad，终端 2 按 README 示例分别发
-   status/top/report。三个响应均为 ok=true；终端 1 Ctrl+C 后确认 Socket 路径消失，
-   再次启动后能继续查询。
+4. 在终端 1 运行 `sudo ./build/kylinrcad`。终端 2 分别用 `sudo ./build/kylinrca_client`
+   执行 `status`、`top`、`report`。确认三次查询都返回 `ok=true`。终端 1 按 Ctrl+C 后，
+   确认 Socket 路径消失，重启 daemon 后可以继续查询。
 
 5. PR 分别记录合成事件回归和实采的真实结果。B 拉取分支复测并 Review，作为合并验收。
    2026-11-26 的历史实采记录保留在原报告中，不能代替本次统一快照改动的验收。

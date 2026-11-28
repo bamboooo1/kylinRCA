@@ -1,4 +1,4 @@
-"""统一 daemon 回归：复用真实分析循环，检查四模块快照、队列边界、配置和 Socket 协议。"""
+"""统一 daemon 回归：复用真实分析循环，检查四模块快照、队列、配置、Socket 和客户端查询。"""
 
 import json
 import os
@@ -14,8 +14,14 @@ import unittest
 
 FIXTURE = sys.argv.pop(1)
 DAEMON = sys.argv.pop(1)
+CLIENT = sys.argv.pop(1)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from check_daemon import QueryRecorder, check_protocol
+
+
+def run_client(*args):
+    """运行一次客户端并返回标准输出、标准错误和退出码。挂起时由测试超时报告失败。"""
+    return subprocess.run([CLIENT, *args], text=True, capture_output=True, timeout=5)
 
 
 class DaemonQueryTest(unittest.TestCase):
@@ -70,6 +76,18 @@ class DaemonQueryTest(unittest.TestCase):
         self.server_process.stdin.write(phase + "\n")
         self.server_process.stdin.flush()
         self.assertEqual(self.server_process.stdout.readline(), "published\n")
+
+    def test_cli_matches_daemon_snapshot(self):
+        """固定快照后分别直查 Socket 和运行客户端，逐字段核对三种输出。"""
+        for phase in ("busy", "disabled"):
+            self.publish(phase)
+            for command in ("status", "top", "report"):
+                with self.subTest(phase=phase, command=command):
+                    expected = self.query(command)
+                    result = run_client("--socket", self.socket_path, command)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(json.loads(result.stdout), expected)
 
     def test_real_analyzer_results_and_window_scope(self):
         initial_status = self.query("status")["data"]
@@ -209,11 +227,15 @@ class DaemonQueryTest(unittest.TestCase):
         self.assertTrue(self.query("status")["ok"])
 
     def test_slow_clients_do_not_lock_snapshot_publication(self):
+        """大快照可被客户端分段读完，慢客户端也不会阻止分析线程发布下一份快照。"""
         self.publish("large")
         with self.connect_client() as connection:
             connection.sendall(b"report\n")
             response = self.receive_response(connection)
             self.assertEqual(len(response["data"]["payload"]), 8 * 1024 * 1024)
+        result = run_client("report", "--socket", self.socket_path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), response)
 
         with self.connect_client() as slow_reader:
             slow_reader.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
@@ -250,6 +272,65 @@ class DaemonQueryTest(unittest.TestCase):
             self.server_process.wait(timeout=3)
         self.assertEqual(self.server_process.returncode, 0)
         self.assertFalse(Path(self.socket_path).exists())
+
+
+class ClientErrorTest(unittest.TestCase):
+    def test_help_and_invalid_arguments(self):
+        """帮助无需建立连接，缺少命令或参数不合法时先报告用法错误。"""
+        result = run_client("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("用法：", result.stdout)
+        for field in ("kylinrca_client", "status", "top", "report", "--socket", "/run/kylinrca/kylinrca.sock"):
+            self.assertIn(field, result.stdout)
+        for args in ((), ("unknown",), ("status", "--socket"), ("status", "report")):
+            with self.subTest(args=args):
+                result = run_client(*args)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("用法：", result.stderr)
+
+    def test_missing_or_unavailable_socket(self):
+        """路径不存在或 Socket 没有监听者时，客户端应提示路径和 daemon 状态。"""
+        with tempfile.TemporaryDirectory(prefix="kylinrca-client-") as directory:
+            path = str(Path(directory) / "daemon.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as inactive_socket:
+                missing = run_client("--socket", path, "status")
+                inactive_socket.bind(path)
+                unavailable = run_client("--socket", path, "status")
+            for result in (missing, unavailable):
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(path, result.stderr)
+                self.assertIn("is kylinrcad running?", result.stderr)
+
+    def test_daemon_error_and_incomplete_response(self):
+        """用临时 Socket 返回指定字节，检查 daemon 错误、半截响应和错误命令回显。"""
+        cases = (
+            (b'{"ok":false,"error":"unknown_command"}\n', "unknown_command"),
+            (b'{"ok":true,"command":"status","data":{}}', "before sending a complete response"),
+            (b'{"ok":true,"command":"top","data":{}}\n', "Unexpected response format"),
+        )
+        with tempfile.TemporaryDirectory(prefix="kylinrca-client-") as directory:
+            path = str(Path(directory) / "daemon.sock")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(path)
+                listener.listen()
+                listener.settimeout(3)
+                for response, message in cases:
+                    with self.subTest(response=response), subprocess.Popen(
+                        [CLIENT, "--socket", path, "status"], text=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    ) as client:
+                        connection, _ = listener.accept()
+                        with connection, connection.makefile("rb") as request:
+                            connection.settimeout(3)
+                            self.assertEqual(request.readline(), b"status\n")
+                            connection.sendall(response)
+                        stdout, stderr = client.communicate(timeout=5)
+                        self.assertEqual(client.returncode, 1)
+                        self.assertEqual(stdout, "")
+                        self.assertIn(message, stderr)
 
 
 def run_config_option(binary, args, success):
