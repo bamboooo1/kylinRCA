@@ -1,13 +1,13 @@
 #include "config_manager.h"
+#include "daemon_analysis.h"
+#include "unix_socket_server.h"
 #include "cpu_bpf_config.h"
 #include "cpu_config.h"
 #include "lock_config.h"
 #include "cpu_runtime_sampler.h"
 #include "cpu_usage_sampler.h"
-#include "json_reporter.h"
 #include "io_config.h"
 #include "io_snapshot.h"
-#include <functional>
 #include "lock_analyzer.h"
 #include "lock_bpf_config.h"
 #include "ring_buffer_consumer.h"
@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <functional>
 #include <csignal>
 #include <iostream>
 #include <memory>
@@ -94,113 +95,8 @@ struct Probe {
     }
 };
 
-// 分析线程入口：直接持有四种分析器，按类型处理队列消息；I/O 与 Lock 一样自行管理窗口。
-// 模块只负责分析，报告输出和共享快照由此入口处理；队列排空后完成最后的 Lock、Syscall 报告。
-void analyze(EventQueue& queue, const AppConfig& config, const CpuAnalyzerConfig& cpu_settings,
-             const LockAnalyzerConfig& lock_settings, const IoAnalyzerConfig& io_settings,
-             uint64_t started_ns, IoSnapshotStore& io_snapshots)
-{
-    SyscallAnalyzer syscalls;
-    // 各模块分别接收自己的规则，Lock 的窗口长度仍由公共配置覆盖。
-    CpuAnalyzer cpu(cpu_settings);
-    auto lock_config = lock_settings;
-    lock_config.window_ns = uint64_t{config.window_ms} * 1'000'000;
-    LockAnalyzer locks(lock_config);
-    if (config.enable_lock)
-        locks.advance_window(started_ns);
-
-    // 模块专用规则来自 IoConfig，只有窗口长度与 Lock 一样由 daemon 的公共设置传入。
-    auto io_config = io_settings;
-    io_config.window_ns = uint64_t{config.window_ms} * 1'000'000;
-    IoAnalyzer io(started_ns, io_config);
-    IoProbeHealth io_health;
-
-    // 从分析器读取结果构造值副本；分析器不持有快照对象，也不依赖查询线程。
-    const auto publish_io = [&] {
-        IoSnapshot snapshot;
-        snapshot.enabled = config.enable_io;
-        if (config.enable_io) {
-            snapshot.counters = io.counters();
-            snapshot.report = io.report();
-            snapshot.probe = io_health;
-        }
-        io_snapshots.publish(std::move(snapshot));
-    };
-    publish_io();
-
-    // 取走分析器本次结算的全部窗口并输出，保留跨越多个空窗口时的完整恢复证据。
-    // 与 Lock 的报告助手相同，序列化和快照职责留在 daemon，而不是放入分析器。
-    const auto report_io_windows = [&] {
-        const auto reports = io.take_reports();
-        for (const auto& report : reports)
-            std::cout << JsonReporter::report_io(report) << '\n' << std::flush;
-        if (!reports.empty()) publish_io();
-    };
-
-    uint64_t last_lock_report = 0;
-    // 只有最近结算窗口变化时输出，避免处理同一窗口中的多条 Lock 事件时重复打印。
-    const auto report_lock_window = [&] {
-        if (locks.window_end_ns() != last_lock_report) {
-            std::cout << JsonReporter::report_locks(locks) << std::flush;
-            last_lock_report = locks.window_end_ns();
-        }
-    };
-
-    uint64_t cpu_events = 0;
-    auto next_syscall_cleanup = std::chrono::steady_clock::now() + 60s;
-    while (auto event = queue.wait_pop()) {
-        if (const auto* syscall = std::get_if<syscall_event>(&*event)) {
-            syscalls.process(*syscall);
-        } else if (const auto* schedule = std::get_if<cpu_event>(&*event)) {
-            cpu.process(*schedule);
-            ++cpu_events;
-        } else if (const auto* lock = std::get_if<kylinrca_lock_event>(&*event)) {
-            locks.process(*lock);
-            report_lock_window();
-        } else if (const auto* event_io = std::get_if<kylinrca_io_event>(&*event)) {
-            // 直接调用 I/O 分析器，事件跨越窗口时可能已经产生报告，因此随后取走输出。
-            io.process(*event_io);
-            report_io_windows();
-        } else {
-            const auto& tick = std::get<AnalysisTick>(*event);
-            if (tick.io) {
-                io_health = *tick.io;
-                std::cout << io_probe_health_json(io_health) << '\n' << std::flush;
-            }
-            if (config.enable_io) {
-                // 普通定时消息推进完整窗口；退出消息调用与 Lock 对应的尾窗结算接口。
-                if (tick.final) io.flush(tick.timestamp_ns);
-                else io.advance_window(tick.timestamp_ns);
-                report_io_windows();
-                publish_io();
-            }
-            if (tick.cpu) {
-                cpu.process_usage(*tick.cpu);
-                std::cout << JsonReporter::report_cpu(cpu.diagnosis(), tick.cpu->window_start_ns,
-                                                     tick.cpu->timestamp_ns, cpu_events, &cpu.config()) << std::flush;
-                cpu.cleanup_exited_threads(60s);
-            }
-            if (config.enable_lock) {
-                locks.advance_window(tick.timestamp_ns);
-                report_lock_window();
-            }
-            const auto now = std::chrono::steady_clock::now();
-            if (config.enable_syscall && now >= next_syscall_cleanup) {
-                syscalls.cleanup_exited_processes(60s);
-                next_syscall_cleanup = now + 60s;
-            }
-        }
-    }
-    if (config.enable_lock) {
-        locks.flush(cpu_monotonic_ns());
-        report_lock_window();
-    }
-    if (config.enable_syscall)
-        std::cout << JsonReporter::report_syscalls(syscalls) << std::flush;
-}
-
 // daemon 的主线程入口：按配置启动探针、建立 CPU 基线和分析线程，再循环接收事件并发送定时消息。
-// 停止时先断开探针、消费尾部、发送 I/O 最终消息，再关闭队列并等待分析结束；运行故障返回非零值。
+// 停止时先结束 Socket 接待、断开探针、消费尾部，发送四模块最终消息后关闭队列并等待分析结束。
 int run(const AppConfig& config, const CpuConfig& cpu_config,
         const LockConfig& lock_config, const IoConfig& io_config)
 {
@@ -221,8 +117,6 @@ int run(const AppConfig& config, const CpuConfig& cpu_config,
     Probe lock_probe;
     Probe io_probe;
 
-    // 保存分析线程最近发布的 I/O 状态，供退出输出和未来查询接口读取副本。
-    IoSnapshotStore io_snapshots;
     RingBufferConsumer consumer(queue); // 统一接收四个 BPF 对象的事件，再把副本送入公共队列。
 
     // 在任何模块开始挂载前确认 I/O 所需的内核参数形式；不兼容就明确退出，不猜测结构和参数。
@@ -262,10 +156,18 @@ int run(const AppConfig& config, const CpuConfig& cpu_config,
 
     const auto window = std::chrono::milliseconds(config.window_ms);
     auto next_tick = std::chrono::steady_clock::now() + window;
-    //创建一个分析线程
-    std::thread worker([&] { analyze(queue, config, cpu_config.analyzer, lock_config.analyzer,
-                                      io_config.analyzer, started_ns, io_snapshots); });
-    runtime_log.log(LogLevel::Info, "daemon", "Ready");//启用的 Probe 和必要采样基线已经建立，worker 也已经创建
+    DaemonAnalysisSettings analysis_settings{config, cpu_config.analyzer, lock_config.analyzer, io_config.analyzer};
+    SnapshotStore snapshots(initial_daemon_snapshot(analysis_settings, started_ns));
+    UnixSocketServer query_server(config.socket_path, snapshots);
+    try {
+        query_server.start();
+    } catch (const std::exception& error) {
+        runtime_log.log(LogLevel::Error, "socket", error.what());
+        return 1;
+    }
+    // 主线程只负责采集和定时消息，分析线程独占 Analyzer，接待线程只读取统一快照。
+    std::thread worker([&] { analyze_events(queue, analysis_settings, started_ns, snapshots, std::cout); });
+    runtime_log.log(LogLevel::Info, "daemon", "Ready");
 
     int result = 0;
 
@@ -308,31 +210,31 @@ int run(const AppConfig& config, const CpuConfig& cpu_config,
         next_tick = std::chrono::steady_clock::now() + window;
     }
 
+    query_server.stop();
     // 先停止四类探针继续产生事件，再接收缓冲区尾部，保证已经产生的数据仍能进入分析队列。
     syscall_probe.detach();
     cpu_probe.detach();
     lock_probe.detach();
     io_probe.detach();
     consumer.drain();
+    // 四模块共用一条最终消息：尾部事件处理后，结算不足整窗的数据并统一保存最终状态。
+    AnalysisTick final_tick{};
+    final_tick.timestamp_ns = cpu_monotonic_ns();
+    final_tick.final = true;
     if (config.enable_io) {
-        // 尾部事件入队后再发送退出消息，使 I/O 在这些事件处理完后结算到停止采集的截止时间。
-        AnalysisTick final_tick{};
-        final_tick.timestamp_ns = cpu_monotonic_ns();
-        final_tick.final = true;
         final_tick.io.emplace();
         if (!read_io_probe_health(io_probe.object.get(), *final_tick.io)) {
             runtime_log.log(LogLevel::Error, "io", "Cannot read final probe health maps");
             result = 1;
-            // 计数读取失败时不发布可能不完整的健康数据，但仍发送退出消息，保留尾窗结算。
             final_tick.io.reset();
         }
-        queue.push(std::move(final_tick));
     }
+    queue.push(std::move(final_tick));
     // 关闭只表示后续不再生产消息，不清空队列；等待分析线程排空并输出最终结果。
     queue.close();
     worker.join();
     // 分析线程已退出，此时读取的是最终 I/O 状态；禁用模块时也明确输出 enabled=false。
-    std::cout << io_snapshot_json(io_snapshots.read()) << '\n' << std::flush;
+    std::cout << io_snapshot_json(snapshots.read()->io) << '\n' << std::flush;
     return result;
 }
 

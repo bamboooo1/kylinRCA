@@ -76,6 +76,8 @@ public:
     // 读取最近结算报告和从启动起的累计计数，供 daemon 构造共享状态副本。
     const std::optional<IoReport>& report() const { return report_; }
     const IoCounters& counters() const { return counters_; }
+    // 返回当前收集窗口的右边界；恰好在边界完成的 I/O 属于当前窗。
+    uint64_t next_window_end_ns() const { return start_ + config_.window_ns; }
     // 保留已有手动结算接口，供独立指标回归指定截止时间并直接取得结果；不会加入待输出报告列表。
     // end_ns 必须晚于当前起点；调用方应先消费属于该截止时间的事件，迟到记录不回写旧窗口。
     IoReport finish_window(uint64_t end_ns, bool complete = true);

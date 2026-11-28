@@ -2,9 +2,7 @@
 #define KYLINRCA_IO_SNAPSHOT_H
 #include "io_analyzer.h"
 #include "io_probe_reader.h"
-#include <mutex>
 #include <optional>
-#include <utility>
 
 // 保存最近一次发布的 I/O 状态副本；未来查询线程读取副本，不直接访问分析线程中的分析器。
 struct IoSnapshot {
@@ -17,22 +15,8 @@ struct IoSnapshot {
 // 将状态副本转换为 io_status JSON，包含累计计数、探针健康和最近窗口；本函数不执行采集。
 std::string io_snapshot_json(const IoSnapshot& snapshot);
 
-// 管理分析线程发布的最近状态，为未来的查询线程提供带锁的副本读写。
-class IoSnapshotStore {
-public:
-    // 分析线程调用：用新的完整状态替换旧副本；不累积历史报告，也不持有分析器引用。
-    void publish(IoSnapshot value) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        value_ = std::move(value);
-    }
-    // 查询方调用：复制最近状态后返回；调用方可在锁外序列化，避免长期阻塞分析线程。
-    IoSnapshot read() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return value_;
-    }
-private:
-    mutable std::mutex mutex_;
-    IoSnapshot value_;
-};
+// 分析线程结算后复制模块的累计值、最近报告和探针健康数据；禁用时只保留 enabled=false。
+// 数据随 DaemonSnapshot 统一发布，不另设模块仓库，不持有分析器引用。
+IoSnapshot make_io_snapshot(bool enabled, const IoAnalyzer& analysis, const IoProbeHealth& health);
 
 #endif

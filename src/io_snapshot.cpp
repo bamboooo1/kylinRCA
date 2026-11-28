@@ -2,8 +2,20 @@
 #include "json_reporter.h"
 #include <sstream>
 
-// 把调用方取得的快照副本序列化为 io_status，供退出输出和未来查询接口复用。
-// 尚未产生窗口时 report 输出 null；序列化过程不修改采集或诊断状态。
+// 分析线程构造 I/O 的值副本；查询发布和加锁由统一仓库负责。
+IoSnapshot make_io_snapshot(bool enabled, const IoAnalyzer& analysis, const IoProbeHealth& health)
+{
+    IoSnapshot state;
+    state.enabled = enabled;
+    if (enabled) {
+        state.counters = analysis.counters();
+        state.report = analysis.report();
+        state.probe = health;
+    }
+    return state;
+}
+
+// 查询和退出输出复用相同 io_status 字段；尚无窗口时 report 为 null，不修改输入状态。
 std::string io_snapshot_json(const IoSnapshot& snapshot)
 {
     std::ostringstream out;

@@ -6,10 +6,10 @@
 窗口推进和退出尾窗归分析器管理，移除了 IoPipeline。
 公共配置保留 daemon 运行参数与模块开关，I/O 专用参数由 IoConfig 管理。
 CPU、Lock 现也支持同样的独立模块配置，见[模块配置与验证](module_configuration.md)；
-下文 23 项回归和三轮实采记录对应 I/O 重构阶段，最新配置扩展回归为 25 项。
+下文测试数量和实采记录对应 2026-11-26 的 I/O/配置阶段；当前 daemon 回归已整合到统一测试入口。
 
 I/O 采集、公共分发、统计、JSON 和线程安全快照已实现。
-**Socket/CLI 的实际请求入口仍依赖 #38/#39，A 的独立联调与人工 Review 仍待完成。**
+Socket 的 status/top/report 已接入统一快照；正式 CLI 属于 #39，人工联调和 Review 仍按本轮实际结果验收。
 
 ## 职责与数据路径
 
@@ -22,7 +22,8 @@ flowchart LR
     A --> W[已结算的 IoReport]
     W --> D
     D --> J[JsonReporter 输出]
-    D --> S[IoSnapshotStore 发布副本]
+    D --> S[SnapshotStore 发布四模块快照]
+    S --> U[UnixSocketServer 查询]
     H[主线程读取健康计数] --> Q
 ~~~
 
@@ -31,8 +32,9 @@ flowchart LR
 | IoAnalyzerConfig | 分析规则、容量、连续窗口条件和窗口长度 |
 | IoConfig | 读取模块配置，分别保存分析规则与探针设备条件 |
 | IoAnalyzer | 事件校验、窗口归属、设备聚合、持续告警、恢复、尾窗、运行累计计数 |
-| daemon 的 analyze | 分发事件和时间通知，取走报告，调用 Reporter，发布快照 |
-| IoSnapshotStore | 带锁保存与读取状态副本，不管理分析器或窗口 |
+| daemon 的 analyze_events | 分发事件和时间通知，取走报告，调用 Reporter，发布快照 |
+| IoSnapshot | I/O 状态数据，包含累计、健康信息和最近报告，不负责加锁 |
+| SnapshotStore | 一次发布四模块查询结果，短暂加锁交换只读快照指针 |
 | I/O 健康读取函数 | 从内核 map 汇总采集链路的累计计数 |
 
 IoAnalyzer 不读取配置文件，不访问 BPF，不输出 JSON，不持有共享快照或输出回调。
@@ -81,11 +83,11 @@ min_samples=10
 
 1. main 分别读取公共配置和模块配置，调用 run。
 2. run 检查开关和 I/O BTF 参数兼容性，加载、配置、登记接收并挂载探针。
-3. 建立 CPU 基线，创建一个分析线程；主线程持续接收并复制四类事件入公共队列。
+3. 建立 CPU 基线和初始快照，启动 Socket 接待线程与分析线程；主线程持续接收并复制四类事件入公共队列。
 4. 分析线程直接调用 IoAnalyzer.process；分析器先结算必要前窗，再接受当前事件。
 5. daemon 通过 take_reports 取走报告，输出 JSON，再将最近结果复制进共享快照。
 6. 主线程定期发送包含 CPU 观测和 I/O 健康计数的 AnalysisTick，分析线程推进窗口。
-7. 退出时先 detach、消费尾部事件，再发送最终 Tick 调用 IoAnalyzer.flush，
+7. 退出时先停止 Socket 接待，再 detach、消费尾部事件，再发送最终 Tick 调用 IoAnalyzer.flush，
    随后关闭队列并等待分析线程排空，最后输出 io_status。
 
 原有 BPF 请求关联、partial complete、requeue/reissue 和释放清理代码未改动。
@@ -102,14 +104,14 @@ io_summary 保留样本数、bytes、读写/错误次数、平均/P95/P99、阈�
 窗口异常情况、持续诊断和迟到/无效/容量计数。
 设备连续三个异常窗口触发 IO_LATENCY，连续三个正常或空窗口恢复。
 
-include/io_snapshot.h 提供 IoSnapshotStore：
-分析线程 publish 完整副本，未来查询线程 read 副本后在锁外序列化。
-IoSnapshot.counters 保存累计计数，probe 保存内核健康数据，report 保存最近窗口；
-禁用时 enabled=false，尚无窗口时 report 为空。io_snapshot_json 保持原有外部 JSON 字段。
+include/io_snapshot.h 保留 IoSnapshot 数据和 io_snapshot_json 序列化。
+分析线程在处理 AnalysisTick 后，把 I/O 的 enabled、counters、probe、report 与其他模块
+一起交给 make_daemon_snapshot，再由唯一的 SnapshotStore 发布。
+Socket 查询使用同一批只读快照；各模块保留自己的窗口边界，不直接读取 Analyzer。
+退出 final tick 结算尾窗后，主线程从统一快照输出原有 io_status，保持历史报告字段。
 
-status 可映射开关、累计和健康计数；report 可映射最近窗口；
-top 可在设备副本上按 P95 降序、设备号升序排序，并注明窗口起止。
-当前提供待接入接口，未声称已有实际 Socket/CLI 查询。
+status 返回四模块开关和事件计数；report.io 返回 io_status；top.io 按设备 P95 降序、
+设备号升序排列，最多 10 项。协议及完整验收见 [Socket 查询说明](daemon_socket.md)。
 
 健康计数包含丢失、map 操作失败、坏时间戳、读取失败、emitted、
 partial、requeue/reissue、最大重排、释放清理和 pending。
@@ -119,9 +121,9 @@ unmatched 包含启动前在途和非目标设备通知，不直接等于丢失�
 ## 重构后验收
 
 ~~~bash
-sudo python3 scripts/check_daemon_io.py --build build/w4-io-refactor --repeat 2 --output build/io-refactor-term
-sudo python3 scripts/check_daemon_io.py --build build/w4-io-refactor --repeat 1 --sigint --output build/io-refactor-int
-sudo python3 scripts/check_daemon_io.py --build build/w4-io-refactor --modes-only --output build/io-refactor-modes
+sudo python3 scripts/check_daemon.py --suite io --build build/w4-io-refactor --repeat 2 --output build/io-refactor-term
+sudo python3 scripts/check_daemon.py --suite io --build build/w4-io-refactor --repeat 1 --sigint --output build/io-refactor-int
+sudo python3 scripts/check_daemon.py --suite modes --build build/w4-io-refactor --output build/io-refactor-modes
 ~~~
 
 复跑需使用不存在的新输出目录。每轮只对新建的 128MiB 镜像建立 loop 设备：

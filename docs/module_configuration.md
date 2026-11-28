@@ -69,16 +69,16 @@ CPU、Lock、I/O 共用 module_config_reader 的基础文本、数字和文件�
 ## 验证
 
 ~~~bash
-sudo python3 scripts/check_daemon_module_config.py --build build/w4-module-config --output build/module-config-real
-sudo python3 scripts/check_daemon_io.py --build build/w4-module-config --repeat 1 --cpu-config config/cpu.conf.example --lock-config config/lock.conf.example --output build/module-config-four-probes
+sudo python3 scripts/check_daemon.py --suite config --build build/w4-module-config --output build/module-config-real
+sudo python3 scripts/check_daemon.py --suite io --build build/w4-module-config --repeat 1 --cpu-config config/cpu.conf.example --lock-config config/lock.conf.example --output build/module-config-four-probes
 ~~~
 
-复跑使用新的输出目录。第一个脚本分别对 CPU、Lock 执行低阈值触发与高阈值对照，
+复跑使用新的输出目录。config 场景分别对 CPU、Lock 执行低阈值触发与高阈值对照，
 核对 JSON 中实际阈值、真实事件及诊断状态。测试参数只写入本轮输出目录，不改产品默认值。
 CPU 运行两线程压力；Lock 运行 8 线程竞争，核对目标 PID，并观察低阈值告警后的恢复。
 CPU 恢复逻辑由确定性观测回归验证，实采是否恢复还取决于背景使用率。
 
-第二个脚本在同一 daemon 中传入三份模块配置，先确认目标设备已经产生真实 I/O，
+io 场景在同一 daemon 中传入三份模块配置，先确认目标设备已经产生真实 I/O，
 再启动 CPU、Lock 和 Syscall 负载，仍独立核对报告窗口重叠；
 I/O 使用新建的临时 loop 镜像，核对三窗告警与恢复、字节与事件闭环，以及模块时间重叠。
 
@@ -89,4 +89,4 @@ CPU 触发与对照、Lock 触发与对照四个实采用例均通过；
 
 [本次环境、配置、原始报告与汇总](module-config/records/2026-11-26/summary.json)单独归档，
 不覆盖此前 I/O 重构证据。结果基于未提交工作树，汇总中的源码哈希标识版本。
-Socket/CLI 查询入口和队友人工 Review 仍是独立待办。
+Socket 查询现已接入统一快照，并在模块配置实采中核对相同阈值；上述历史记录仍只代表原版本。CLI 与人工 Review 按对应任务完成。

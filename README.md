@@ -98,16 +98,44 @@ CPU、Lock 参数说明、校验规则及实测记录见
 [模块配置与验证](docs/module_configuration.md)。
 
 产品默认 P95 阈值保持 10ms。
-真实 fio 与四模块重叠负载、SIGINT/SIGTERM 和模块开关验收：
+真实验收统一由 check_daemon.py 运行；完整验收含 Socket、模块配置、四模块负载及开关模式：
 
 ~~~bash
-sudo python3 scripts/check_daemon_io.py
-sudo python3 scripts/check_daemon_io.py --modes-only
+sudo python3 scripts/check_daemon.py
+# 单独复测 Socket、I/O 或开关：
+sudo python3 scripts/check_daemon.py --suite socket
+sudo python3 scripts/check_daemon.py --suite io --repeat 1
+sudo python3 scripts/check_daemon.py --suite modes
 ~~~
 
 脚本在新建的临时 loop 镜像上运行；100μs 仅为 loop 验收阈值。
-数据路径、快照接口、实采记录和待完成的 Socket/CLI 衔接见
+数据路径、统一快照和历史实采记录见
 [W4 I/O daemon 集成报告](docs/io_daemon_w4_report.md)。
+
+### 查询运行中的 daemon（Issue #38）
+
+daemon 在 `socket_path`（默认 `/run/kylinrca/kylinrca.sock`）接收
+`status`、`top`、`report` 查询。分析线程每个窗口保存新快照，查询线程读取快照。
+默认 Socket 权限为 `0600`；使用 `sudo` 启动 daemon 后，查询也使用 `sudo`。
+
+保持上面的 daemon 运行，在另一个终端执行以下命令；把 `status` 改成 `top`
+或 `report` 可以查询热点或已有分析结果。这段 Python 仅发送请求，不启动采集：
+
+```bash
+sudo python3 - status <<'PY'
+import json, socket, sys
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+    connection.settimeout(3)
+    connection.connect('/run/kylinrca/kylinrca.sock')
+    connection.sendall((sys.argv[1] + '\n').encode())
+    with connection.makefile('rb') as response:
+        print(json.dumps(json.loads(response.readline()), indent=2, ensure_ascii=False))
+PY
+```
+
+`top` 每模块最多返回 10 个热点，包含各自的窗口起止时间；首次窗口尚未完成时
+相应结果为 `null`。`status` 的事件计数和窗口数应随运行继续增长。
+协议、字段、排序、路径清理和本地验收步骤见 [Socket 查询说明](docs/daemon_socket.md)。
 
 ## W3 四模块整合验收
 
