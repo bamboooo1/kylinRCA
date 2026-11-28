@@ -112,29 +112,36 @@ sudo python3 scripts/check_daemon.py --suite modes
 数据路径、统一快照和历史实采记录见
 [W4 I/O daemon 集成报告](docs/io_daemon_w4_report.md)。
 
-### 查询运行中的 daemon（Issue #38）
+### 查询运行中的 daemon
 
-daemon 在 `socket_path`（默认 `/run/kylinrca/kylinrca.sock`）接收
-`status`、`top`、`report` 查询。分析线程每个窗口保存新快照，查询线程读取快照。
-默认 Socket 权限为 `0600`；使用 `sudo` 启动 daemon 后，查询也使用 `sudo`。
-
-保持上面的 daemon 运行，在另一个终端执行以下命令；把 `status` 改成 `top`
-或 `report` 可以查询热点或已有分析结果。这段 Python 仅发送请求，不启动采集：
+终端 1 启动 `kylinrcad`，等待日志显示 `[daemon] Ready`。
 
 ```bash
-sudo python3 - status <<'PY'
-import json, socket, sys
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-    connection.settimeout(3)
-    connection.connect('/run/kylinrca/kylinrca.sock')
-    connection.sendall((sys.argv[1] + '\n').encode())
-    with connection.makefile('rb') as response:
-        print(json.dumps(json.loads(response.readline()), indent=2, ensure_ascii=False))
-PY
+sudo ./build/kylinrcad > /tmp/kylinrcad.json
 ```
 
-`top` 每模块最多返回 10 个热点，包含各自的窗口起止时间；首次窗口尚未完成时
-相应结果为 `null`。`status` 的事件计数和窗口数应随运行继续增长。
+终端 2 运行以下查询。客户端只读取 daemon 已发布的快照。Socket 权限为 `0600`，
+使用 `sudo` 启动 daemon 后，查询也使用 `sudo`。
+
+```bash
+sudo ./build/kylinrca_client status
+sudo ./build/kylinrca_client top
+sudo ./build/kylinrca_client report
+./build/kylinrca_client --help
+```
+
+`status` 显示模块开关、事件计数和已结算窗口数。`top` 按模块列出最近窗口的起止时间、
+排序指标和最多 10 个热点，责任对象分别用 PID 和系统调用编号、PID 和 TID、PID 和锁地址、
+设备主次编号标识。没有可用窗口的模块显示为 `null`。`report` 返回各模块的详细统计和诊断。
+成功结果为 JSON，可追加 `| python3 -m json.tool` 缩进查看。失败信息写到标准错误，命令以非零状态退出。
+
+客户端默认连接 `/run/kylinrca/kylinrca.sock`。如果 daemon 的配置将 `socket_path`
+设为 `/tmp/kylinrca-demo.sock`，终端 2 用相同路径查询。
+
+```bash
+sudo ./build/kylinrca_client --socket /tmp/kylinrca-demo.sock status
+```
+
 协议、字段、排序、路径清理和本地验收步骤见 [Socket 查询说明](docs/daemon_socket.md)。
 
 ## W3 四模块整合验收

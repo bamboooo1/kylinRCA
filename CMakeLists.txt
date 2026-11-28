@@ -432,6 +432,10 @@ target_compile_definitions(kylinrcad PRIVATE
     KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
 add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf io_bpf)
 
+add_executable(kylinrca_client src/kylinrca_client.cpp)
+target_include_directories(kylinrca_client PRIVATE include)
+target_compile_options(kylinrca_client PRIVATE -Wall -Wextra -Werror)
+
 add_executable(kylinrca_io_config_test tests/io_config_test.cpp)
 target_link_libraries(kylinrca_io_config_test PRIVATE kylinrca_module_config)
 target_compile_options(kylinrca_io_config_test PRIVATE -Wall -Wextra -Werror)
@@ -451,7 +455,8 @@ target_compile_options(kylinrca_daemon_fixture PRIVATE -Wall -Wextra -Werror)
 if(Python3_Interpreter_FOUND)
     add_test(NAME daemon_integration
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/daemon_test.py
-            $<TARGET_FILE:kylinrca_daemon_fixture> $<TARGET_FILE:kylinrcad>)
+            $<TARGET_FILE:kylinrca_daemon_fixture> $<TARGET_FILE:kylinrcad>
+            $<TARGET_FILE:kylinrca_client>)
     set_tests_properties(daemon_integration PROPERTIES TIMEOUT 30)
 else()
     add_test(NAME daemon_pipeline COMMAND kylinrca_daemon_fixture --self-test)
