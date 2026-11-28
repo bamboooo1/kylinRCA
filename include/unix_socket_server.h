@@ -14,7 +14,7 @@ public:
     UnixSocketServer(const UnixSocketServer&) = delete;
     UnixSocketServer& operator=(const UnixSocketServer&) = delete;
 
-    // Bind failures throw; an existing path is never removed to make room for a server.
+    // 主线程启动服务：绑定失败抛异常；已有路径保留，避免覆盖另一进程或普通文件。
     void start();
     void stop();
 

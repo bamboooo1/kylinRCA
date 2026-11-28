@@ -20,3 +20,11 @@ vmlinux.h
 
 # Local configuration
 config.local.yaml
+
+# Python 验收脚本生成的缓存文件
+__pycache__/
+*.pyc
+
+# 本地原始验收记录
+/docs/w4-io/records/
+/docs/module-config/records/

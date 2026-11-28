@@ -134,7 +134,7 @@ const char* cpu_diagnosis_state_name(CpuDiagnosisState state);
 /*
  * CpuAnalyzer 的可配置阈值。
  *
- * 第一版先由构造函数传入，后续再接 YAML/INI 配置。
+ * 由 CpuConfig 读取模块文件，再经 daemon 传入构造函数；未指定文件时保留默认值。
  */
 struct CpuAnalyzerConfig {
     /*
@@ -248,6 +248,9 @@ public:
      * 返回当前 CPU 诊断结果。
      */
     const CpuDiagnosis& diagnosis() const;
+
+    // 读取实际采用的诊断规则，供报告注明阈值；只读访问不允许查询方修改分析状态。
+    const CpuAnalyzerConfig& config() const { return config_; }
 
     /*
      * 清空调度统计和 RCA 状态。

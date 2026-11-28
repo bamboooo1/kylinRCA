@@ -87,6 +87,8 @@ public:
     const LockAnalyzerConfig& config() const { return config_; }
     uint64_t window_start_ns() const { return report_start_ns_; }
     uint64_t window_end_ns() const { return report_end_ns_; }
+    // 首次初始化后返回当前收集窗口的右边界；恰好在边界结束的等待属于下一窗。
+    uint64_t next_window_end_ns() const { return current_start_ns_ + config_.window_ns; }
     uint64_t received_events() const { return received_events_; }
     uint64_t rejected_events() const { return rejected_events_; }
     uint64_t late_events() const { return late_events_; }

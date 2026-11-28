@@ -57,19 +57,20 @@ cmake --build build
 
 ## W4 统一采集进程
 
-构建后启动 `kylinrcad`，默认同时挂载 Syscall、CPU、Lock 探针：
+构建后启动 `kylinrcad`，默认同时挂载 Syscall、CPU、Lock、I/O 探针：
 
 ```bash
 sudo ./build/kylinrcad > /tmp/kylinrcad.json
 ```
 
 可用 `--config config/kylinrca.conf.example` 设置模块开关、CPU 采样与
-Lock 的窗口时长、日志等级。至少启用一个采集模块。采集结果写到标准输出，
+Lock/I/O 的公共窗口时长、日志等级。CPU、Lock、I/O 的专用规则使用各自的模块配置，
+分别通过 --cpu-config、--lock-config、--io-config 传入。至少启用一个采集模块。采集结果写到标准输出，
 运行日志走标准错误。
 CPU 和 Lock 按窗口输出 `cpu_summary` 和 `lock_summary`，Syscall 在退出时输出
 `syscall_summary`。各报告都是独立 JSON 文档，可用 `jq` 逐份读取。
 
-看到 `[daemon] Ready` 后，可以在另一个终端用真实负载验证三条链路：
+看到 `[daemon] Ready` 后，可以在另一个终端用真实负载验证 Syscall、CPU、Lock 链路：
 
 ```bash
 sh -c 'echo "Syscall PID=$$"; exec cat /proc/self/status >/dev/null'
@@ -81,6 +82,35 @@ wait
 等待几个窗口让告警恢复后，在 daemon 终端按 Ctrl+C。检查 Syscall 的目标
 PID 统计、CPU 的热点与 runtime 有效性、Lock 的竞争 PID/地址及恢复。
 SIGINT 和 SIGTERM 都会解除挂载、排空队列并等待分析线程退出。
+
+I/O 直接由 IoAnalyzer 处理事件、推进窗口和结算尾窗，daemon 负责 JSON 输出与快照发布。
+模块配置示例：
+
+~~~bash
+sudo ./build/kylinrcad --config config/kylinrca.conf.example \
+  --cpu-config config/cpu.conf.example \
+  --lock-config config/lock.conf.example \
+  --io-config config/io.conf.example
+~~~
+
+三个模块文件均可省略，省略参数保留现有默认值；Syscall 保留公共开关。
+CPU、Lock 参数说明、校验规则及实测记录见
+[模块配置与验证](docs/module_configuration.md)。
+
+产品默认 P95 阈值保持 10ms。
+真实验收统一由 check_daemon.py 运行；完整验收含 Socket、模块配置、四模块负载及开关模式：
+
+~~~bash
+sudo python3 scripts/check_daemon.py
+# 单独复测 Socket、I/O 或开关：
+sudo python3 scripts/check_daemon.py --suite socket
+sudo python3 scripts/check_daemon.py --suite io --repeat 1
+sudo python3 scripts/check_daemon.py --suite modes
+~~~
+
+脚本在新建的临时 loop 镜像上运行；100μs 仅为 loop 验收阈值。
+数据路径、统一快照和历史实采记录见
+[W4 I/O daemon 集成报告](docs/io_daemon_w4_report.md)。
 
 ### 查询运行中的 daemon（Issue #38）
 

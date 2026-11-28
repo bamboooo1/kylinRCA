@@ -1,0 +1,10 @@
+# CPU 模块配置，通过 --cpu-config 传入；省略字段保留现有默认值。
+# 使用率单位为百分比，允许小数，范围 0..100；恢复阈值必须严格低于告警阈值。
+high_usage_threshold_percent=80
+recovery_threshold_percent=50
+# 排队延迟阈值，单位微秒，必须为正 uint32；默认 10ms。
+runqueue_delay_threshold_us=10000
+# 连续异常和恢复样本数，均为正 uint32。
+alert_consecutive_samples=3
+recovery_consecutive_samples=3
+# CPU 采样间隔使用公共配置的 window_ms，不在模块文件中重复定义。

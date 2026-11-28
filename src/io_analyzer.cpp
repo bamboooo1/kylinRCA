@@ -1,33 +1,45 @@
 #include "io_analyzer.h"
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 //保存配置并检查参数
 IoAnalyzer::IoAnalyzer(uint64_t start_ns, IoAnalyzerConfig config)
     : start_(start_ns), config_(config)
 {
-    if (!config.min_samples || !config.latency_threshold_ns ||
+    if (!config.window_ns || !config.min_samples || !config.latency_threshold_ns ||
         !config.max_samples_per_device || !config.max_devices || !config.max_total_samples ||
         !config.alert_consecutive_windows || !config.recovery_consecutive_windows)
         throw std::invalid_argument("I/O thresholds and capacities must be positive");
 }
 
+// 便捷事件入口：复用完整处理流程，只向调用方返回是否接受成功。
 bool IoAnalyzer::process(const kylinrca_io_event& e)
 {
     return process_detailed(e) == IoProcessResult::Accepted;
 }
 
+// 公共队列或独立采集入口送来一条完成事件，分析器自行处理校验、窗口推进和设备聚合。
+// 累计接收计数与本窗口接受数分别保存，便于与内核 emitted 数量核对。
 IoProcessResult IoAnalyzer::process_detailed(const kylinrca_io_event& e)
 {
     // 检查事件是否合法
     if (e.header.version != KYLINRCA_EVENT_VERSION ||
         e.header.type != EVENT_TYPE_IO || e.header.size != sizeof(e) ||
         e.header.pid || e.header.tid || e.operation > IO_OP_OTHER || e.duration_ns > e.header.timestamp_ns) {
-        ++invalid_; return IoProcessResult::Invalid;
+        ++invalid_; ++counters_.invalid; return IoProcessResult::Invalid;
     }
+    // 窗口结束边界包含在前窗；事件超过边界时先结算前面的完整窗口，避免跨窗样本混合。
+    if (e.header.timestamp_ns > start_ &&
+        e.header.timestamp_ns - start_ > config_.window_ns)
+        advance_window(e.header.timestamp_ns - 1);
+    ++counters_.received;
+    counters_.reads += e.operation == IO_OP_READ;
+    counters_.writes += e.operation == IO_OP_WRITE;
+    counters_.bytes += e.bytes;
     // 拒绝旧窗口事件，并检查全窗口容量
-    if (e.header.timestamp_ns <= start_) { ++late_; return IoProcessResult::Late; }
-    if (samples_ >= config_.max_total_samples) { ++dropped_; return IoProcessResult::CapacityDropped; }
+    if (e.header.timestamp_ns <= start_) { ++late_; ++counters_.late; return IoProcessResult::Late; }
+    if (samples_ >= config_.max_total_samples) { ++dropped_; ++counters_.capacity_drops; return IoProcessResult::CapacityDropped; }
 
     // 把主次设备号组成一个键，再查找这个设备的桶
     uint64_t key = (uint64_t(e.dev_major) << 32) | e.dev_minor;
@@ -41,7 +53,7 @@ IoProcessResult IoAnalyzer::process_detailed(const kylinrca_io_event& e)
             tracked += states_.count(entry.first) == 0; //tracked表示当前分析器当前一共跟踪了多少个不同设备
                                                         //用于检查是否达到 max_devices 容量上限。
         if (!states_.count(key) && tracked >= config_.max_devices) {
-            ++dropped_; return IoProcessResult::CapacityDropped;
+            ++dropped_; ++counters_.capacity_drops; return IoProcessResult::CapacityDropped;
         }
         it = buckets_.emplace(key, Bucket{}).first; //it->first为设备键key
         it->second.stats.major = e.dev_major; //it->second为统计桶bucket
@@ -49,7 +61,7 @@ IoProcessResult IoAnalyzer::process_detailed(const kylinrca_io_event& e)
     }
     auto& b = it->second;
     if (b.durations.size() >= config_.max_samples_per_device) {
-        ++dropped_; return IoProcessResult::CapacityDropped;
+        ++dropped_; ++counters_.capacity_drops; return IoProcessResult::CapacityDropped;
     }
     ++samples_; //全窗口样本数加 1
     ++b.stats.count; //本设备样本数加 1
@@ -66,7 +78,7 @@ IoProcessResult IoAnalyzer::process_detailed(const kylinrca_io_event& e)
 IoReport IoAnalyzer::finish_window(uint64_t end_ns, bool complete)
 {
     if (end_ns <= start_) throw std::invalid_argument("window must advance");
-    // Caller supplies a monotonic cutoff after consuming the current batch.
+    // 调用方提供单调时钟截止时间；完整窗口推动诊断，退出尾窗只计算指标并保留原诊断状态。
     IoReport report;
     report.latency_threshold_ns = config_.latency_threshold_ns;
     report.min_samples = config_.min_samples;
@@ -139,5 +151,39 @@ IoReport IoAnalyzer::finish_window(uint64_t end_ns, bool complete)
     for (const auto& pair : states_)
         if (pair.second.io_latency) report.diagnoses.push_back(pair.second);
     buckets_.clear(); samples_ = 0; invalid_ = late_ = dropped_ = 0; start_ = end_ns;
+    report_ = report;
     return report;
+}
+
+
+// 定时消息或新事件调用此接口，逐个结算完整窗口；没有事件的窗口同样参与恢复判断。
+// 返回是否产生新报告，调用方随后取走报告并自行决定输出和快照发布。
+bool IoAnalyzer::advance_window(uint64_t timestamp_ns)
+{
+    bool advanced = false;
+    while (timestamp_ns >= start_ && timestamp_ns - start_ >= config_.window_ns) {
+        reports_.push_back(finish_window(start_ + config_.window_ns));
+        advanced = true;
+    }
+    return advanced;
+}
+
+// 采集停止后结算到指定截止时间，不把不足整窗的片段算作一次异常或恢复。
+// 如果截止时间不晚于当前窗口起点，不重复生成尾窗。
+bool IoAnalyzer::flush(uint64_t timestamp_ns)
+{
+    bool changed = advance_window(timestamp_ns);
+    if (timestamp_ns > start_) {
+        reports_.push_back(finish_window(timestamp_ns, false));
+        changed = true;
+    }
+    return changed;
+}
+
+// 把待输出报告交还调用方并清空列表；最近一次报告副本仍由 report() 提供。
+std::vector<IoReport> IoAnalyzer::take_reports()
+{
+    auto reports = std::move(reports_);
+    reports_.clear();
+    return reports;
 }

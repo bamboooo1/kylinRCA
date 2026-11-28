@@ -401,50 +401,58 @@ add_test(NAME config_manager COMMAND kylinrca_config_test)
 add_test(NAME config_example COMMAND kylinrca_config_demo
     ${CMAKE_CURRENT_SOURCE_DIR}/config/kylinrca.conf.example)
 
-add_library(kylinrca_socket STATIC
-    src/daemon_snapshot.cpp
-    src/unix_socket_server.cpp)
-target_include_directories(kylinrca_socket PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(kylinrca_socket PUBLIC Threads::Threads)
+# 模块规则与公共配置分别解析，四种分析器通过统一快照向 Socket 提供结果。
+add_library(kylinrca_module_config STATIC src/cpu_config.cpp src/lock_config.cpp src/io_config.cpp)
+target_include_directories(kylinrca_module_config PUBLIC include)
+target_compile_options(kylinrca_module_config PRIVATE -Wall -Wextra -Werror)
+
+# 真实 daemon 与合成事件测试复用同一事件队列、分析循环和快照生成逻辑。
+add_library(kylinrca_daemon_analysis STATIC
+    src/daemon_analysis.cpp src/daemon_snapshot.cpp src/event_queue.cpp
+    src/syscall_analyzer.cpp src/cpu_analyzer.cpp src/json_reporter.cpp src/cpu_json_reporter.cpp
+    src/io_snapshot.cpp src/io_probe_reader.cpp)
+target_include_directories(kylinrca_daemon_analysis PUBLIC include)
+target_link_libraries(kylinrca_daemon_analysis PUBLIC
+    Threads::Threads PkgConfig::LIBBPF kylinrca_lock_analysis kylinrca_io_analysis)
+target_compile_options(kylinrca_daemon_analysis PRIVATE -Wall -Wextra -Werror)
+
+add_library(kylinrca_socket STATIC src/unix_socket_server.cpp)
+target_link_libraries(kylinrca_socket PUBLIC kylinrca_daemon_analysis)
 target_compile_options(kylinrca_socket PRIVATE -Wall -Wextra -Werror)
 
-add_executable(kylinrcad
-    src/kylinrcad.cpp
-    src/event_queue.cpp
-    src/ring_buffer_consumer.cpp
-    src/syscall_analyzer.cpp
-    src/cpu_analyzer.cpp
-    src/cpu_usage_sampler.cpp
-    src/proc_cpu_sampler.cpp
-    src/json_reporter.cpp
-    src/cpu_json_reporter.cpp)
+add_executable(kylinrcad src/kylinrcad.cpp src/ring_buffer_consumer.cpp
+    src/cpu_usage_sampler.cpp src/proc_cpu_sampler.cpp)
 target_link_libraries(kylinrcad PRIVATE
-    PkgConfig::LIBBPF Threads::Threads kylinrca_lock_analysis kylinrca_config kylinrca_logger
-    kylinrca_socket)
+    kylinrca_socket kylinrca_config kylinrca_logger kylinrca_module_config)
 target_compile_options(kylinrcad PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(kylinrcad PRIVATE
     KYLINRCA_SYSCALL_BPF_OBJECT="${SYSCALL_BPF_OBJECT}"
     KYLINRCA_CPU_BPF_OBJECT="${CPU_BPF_OBJECT}"
-    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}")
-add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf)
+    KYLINRCA_LOCK_BPF_OBJECT="${LOCK_BPF_OBJECT}"
+    KYLINRCA_IO_BPF_OBJECT="${IO_BPF_OBJECT}")
+add_dependencies(kylinrcad syscall_bpf cpu_bpf lock_bpf io_bpf)
 
-add_executable(kylinrca_event_queue_test tests/event_queue_test.cpp src/event_queue.cpp)
-target_include_directories(kylinrca_event_queue_test PRIVATE include)
-target_link_libraries(kylinrca_event_queue_test PRIVATE Threads::Threads)
-add_test(NAME daemon_event_queue COMMAND kylinrca_event_queue_test)
-set_tests_properties(daemon_event_queue PROPERTIES TIMEOUT 5)
+add_executable(kylinrca_io_config_test tests/io_config_test.cpp)
+target_link_libraries(kylinrca_io_config_test PRIVATE kylinrca_module_config)
+target_compile_options(kylinrca_io_config_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME io_module_config COMMAND kylinrca_io_config_test)
 
+add_executable(kylinrca_cpu_lock_config_test tests/cpu_lock_config_test.cpp
+    src/cpu_analyzer.cpp src/cpu_json_reporter.cpp)
+target_link_libraries(kylinrca_cpu_lock_config_test PRIVATE kylinrca_module_config kylinrca_lock_analysis)
+target_compile_options(kylinrca_cpu_lock_config_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME cpu_lock_module_config COMMAND kylinrca_cpu_lock_config_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/cpu.conf.example ${CMAKE_CURRENT_SOURCE_DIR}/config/lock.conf.example)
+
+# 一套 daemon 回归同时验证队列、四模块窗口、统一快照、配置选项和 Socket 协议。
+add_executable(kylinrca_daemon_fixture tests/daemon_fixture.cpp)
+target_link_libraries(kylinrca_daemon_fixture PRIVATE kylinrca_socket)
+target_compile_options(kylinrca_daemon_fixture PRIVATE -Wall -Wextra -Werror)
 if(Python3_Interpreter_FOUND)
-    add_executable(kylinrca_socket_fixture
-        tests/socket_server_fixture.cpp
-        src/syscall_analyzer.cpp
-        src/cpu_analyzer.cpp
-        src/json_reporter.cpp
-        src/cpu_json_reporter.cpp)
-    target_link_libraries(kylinrca_socket_fixture PRIVATE kylinrca_socket kylinrca_lock_analysis)
-    target_compile_options(kylinrca_socket_fixture PRIVATE -Wall -Wextra -Werror)
-    add_test(NAME daemon_socket
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/socket_server_test.py
-            $<TARGET_FILE:kylinrca_socket_fixture>)
-    set_tests_properties(daemon_socket PROPERTIES TIMEOUT 20)
+    add_test(NAME daemon_integration
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/daemon_test.py
+            $<TARGET_FILE:kylinrca_daemon_fixture> $<TARGET_FILE:kylinrcad>)
+    set_tests_properties(daemon_integration PROPERTIES TIMEOUT 30)
+else()
+    add_test(NAME daemon_pipeline COMMAND kylinrca_daemon_fixture --self-test)
 endif()

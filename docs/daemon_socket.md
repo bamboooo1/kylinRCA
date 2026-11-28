@@ -1,139 +1,139 @@
-# daemon Socket 查询（Issue #38）
+# daemon 统一快照与 Socket 查询（Issue #38）
 
-`kylinrcad` 负责采集、分析和保存结果；另一个程序通过本机 Unix Domain Socket
-查询结果。当前接入 Syscall、CPU、Lock。`kylinrca status/top/report` 正式 CLI
-属于 Issue #39，本轮可以用 README 中的 Python 请求示例验证。
+`kylinrcad` 统一采集 Syscall、CPU、Lock、I/O。另一个程序通过 Unix Domain Socket
+查询状态、热点和已有报告。正式 `kylinrca status/top/report` CLI 属于 Issue #39，
+本轮使用 README 中的 Python 查询示例和统一 daemon 验收入口。
 
-## 数据怎么传递
+## 职责与数据流
 
-1. 采集线程把事件和定时 `AnalysisTick` 放入 `EventQueue`。
-2. 分析线程独自使用 Analyzer。每次处理完 tick，就准备一份新的 `DaemonSnapshot`。
-3. `SnapshotStore::publish()` 在锁外准备新快照，加锁交换指针，随即解锁。
-4. Socket 线程加锁取得一个只读快照的共享指针，随即解锁，再整理响应并发送。
+| 位置 | 职责 |
+| --- | --- |
+| `src/kylinrcad.cpp` | 配置、探针、采集、CPU/内核健康采样、定时与停止通知 |
+| `src/daemon_analysis.cpp` | 分析线程独占四个 Analyzer，处理队列、结算窗口、输出报告、制作快照 |
+| `IoSnapshot` | I/O 启用状态、累计计数、最近窗口、探针健康数据的值副本 |
+| `DaemonSnapshot` | 同批生成的 status/top/report JSON 和退出所需的 I/O 最终状态 |
+| `SnapshotStore` | 唯一共享仓库，在锁外准备快照，仅在交换或读取共享指针时加锁 |
+| `src/unix_socket_server.cpp` | 独立线程接收请求，读取只读快照，在锁外发送答案 |
 
-旧快照会保留到读者用完。即使客户端读取缓慢，分析线程仍可以发布新快照。
-JSON 构造、排序和网络收发均不占用快照锁，采集线程不使用这把锁。
-查询只读取已有结果，不重新运行诊断。
+原来的 IoSnapshotStore 已合入统一发布机制。模块负责分析，快照负责保存结果，
+Socket 负责通信；查询不重新分析，也不直接访问 Analyzer。
 
-快照按 `window_ms` 更新，并非逐事件更新。不同请求可能读到不同版本，
-可以比较 `updated_ns` 判断。停止时先停止 Socket 服务，再解除探针并排空分析队列。
+主线程把事件和 AnalysisTick 放进 EventQueue。事件用于累计统计，只有分析线程处理
+tick 时才结算并发布快照。Lock 和 I/O 按完成时间判断归属，跨到下一窗口的记录先暂存，
+等 tick 打开相应窗口后再加入统计。恰好在结束边界的记录，Lock 计入下一窗，
+I/O 计入当前窗。
+
+如果一条 tick 跨过多个完整窗口，分析线程逐窗结算 Lock 和 I/O，每份结果在被替换前
+先发布，CPU 和 Syscall 沿用这条 tick 的同一份结果。SnapshotStore 对新查询提供最新
+快照，已经开始的查询可继续持有旧快照，直到使用完毕。
+排序、JSON 生成和 Socket 收发都不持仓库锁，采集线程也不使用这把锁。
+
+停止时先结束 Socket 接待，再解除四种探针、消费尾部，投递 final tick。
+分析线程结算 Lock/I/O 尾窗并更新统一快照，队列关闭排空后退出。
+主线程读取最终 IoSnapshot，输出原有 io_status。final tick 不增加完整窗口计数。
 
 ## 最小协议
 
-- 地址类型为 `AF_UNIX`，连接类型为 `SOCK_STREAM`。
-- 一次连接发送一个请求，取得一个响应。需要再次查询时建立新连接。
-- 请求为区分大小写的 ASCII 命令，以一个 LF（`\n`）结束：
-  `status\n`、`top\n` 或 `report\n`。不接受参数、空格或 CRLF。
-- 请求最多 64 字节，包含末尾 LF。按第一个 LF 分帧；其后内容不处理。
-  请求可以分多次发送，不能依靠一次 `recv()` 就收到完整请求。
-- 响应为 UTF-8 单行 JSON，以 LF 结束。客户端应读取到 LF，不依赖一次
-  `recv()` 或连接断开来判断响应结束。服务端发完响应后关闭连接。
+- AF_UNIX、SOCK_STREAM，一次连接发送一个请求并读取一个响应，随后服务端关闭连接。
+- 请求区分大小写，以一个 LF（`\n`）结束：`status\n`、`top\n`、`report\n`。
+  不接受参数、空格或 CRLF；最多 64 字节，包含 LF。只处理第一行，其后内容忽略。
+- 请求可以分多次发送；响应也可能分多次收到，不能把一次 recv 当成消息边界。
+- 响应是 UTF-8 单行 JSON，以 LF 结束；客户端读取到 LF 即取得完整响应。
 - 成功：`{"ok":true,"command":"status","data":{...}}`。
-- 未知或空命令：`{"ok":false,"error":"unknown_command"}`。
-- 超长请求：`{"ok":false,"error":"request_too_long"}`。
-- 客户端提前断开，或收发连续约 1 秒没有进展时，服务端关闭该连接。
-  不完整请求直接关闭。发送时使用 `MSG_NOSIGNAL`，断开不会触发 SIGPIPE 终止 daemon。
+- 空命令或未知命令：`{"ok":false,"error":"unknown_command"}`。
+- 超长命令：`{"ok":false,"error":"request_too_long"}`。
+- 不完整请求在断开或收发等待约 1 秒没有进展时关闭。发送使用 MSG_NOSIGNAL，
+  对方提前断开不会因 SIGPIPE 终止 daemon。
 
-服务端使用一个独立线程依次处理客户端，等待队列长度为 8。慢客户端可能让其他
-查询短暂排队；收发超时使空闲客户端释放连接，采集和快照发布继续工作。
-这是一套供本机 CLI 使用的最小协议，没有订阅、长连接或自定义排序。
+服务端一个线程依次处理客户端，监听等待队列设置为 8。慢客户端可能使其他查询排队，
+不阻止分析线程发布新快照。协议没有订阅和长连接。
 
-## status 字段
-
-`data` 含有以下字段：
+## status
 
 | 字段 | 含义 |
 | --- | --- |
-| `state` | 服务可查询期间为 `running`；启动失败不提供查询服务 |
-| `pid` | daemon 自身的进程号 |
-| `started_ns` | 本次 daemon 开始采集初始化时的单调时钟时间 |
-| `updated_ns` | 当前快照对应的 tick 时间；第一份为 `started_ns` |
-| `completed_windows` | 已完成并保存的 tick 数；启动时为 0 |
-| `window_ms` | 配置的采样周期，单位毫秒 |
-| `modules` | `syscall/cpu/lock/io` 实际接入状态；当前 `io` 固定为 `false` |
-| `processed_events` | 分析线程自启动以来消费的 `syscall/cpu/lock` 事件数量 |
+| `state` | 服务可查询期间为 running；启动失败不提供查询服务 |
+| `pid` | daemon 自身 PID |
+| `started_ns` | 本次开始初始化采集时的单调时钟时间 |
+| `updated_ns` | 当前快照对应的 tick 时间，首次为 started_ns |
+| `completed_windows` | 已处理的普通 tick 数，启动时为 0，不包含最终尾窗消息 |
+| `window_ms` | 公共采样周期 |
+| `modules` | syscall/cpu/lock/io 的实际启用状态 |
+| `processed_events` | 分析线程自启动以来消费的四类事件数量，不包含 tick |
 
-事件计数不包含 tick，不是 BPF 内核侧总事件数；Lock 的拒绝或迟到事件也算已消费，
-其细分计数保留在 `report.lock`。配置中的 `enable_io` 尚未接入统一 daemon，
-因此不会据此声称 I/O 正在采集。
+消费计数包含随后被分析器拒绝的事件，并非 BPF 内核总数。I/O 的 invalid、late、
+capacity_drops、字节数和探针健康数据保留在 report.io，Lock 细分计数保留在 report.lock。
+所有时间戳和耗时以纳秒计；时间戳使用 CLOCK_MONOTONIC，不是日历时间。
 
-所有 `*_ns` 时间戳来自 `CLOCK_MONOTONIC`，单位为纳秒，不能当作日历时间。
-耗时也使用纳秒。CPU 使用率以一个逻辑核心为 100%；进程使用率可能超过 100%。
+## top
 
-## top 字段和窗口
+外层含 updated_ns、limit=10 和四个模块，每个模块有 window_start_ns、window_end_ns、
+sort_by、items。未启用或没有已结算结果时为 null，有窗口但没有热点时 items 为 []。
 
-`data` 含 `updated_ns`、`limit=10`，以及 `syscall/cpu/lock` 三个模块。
-模块未启用或没有第一个已完成窗口时，模块为 `null`。
-已有窗口但没有热点时，返回带窗口时间的 `items: []`，不会沿用上一轮热点。
-
-每个模块包含 `window_start_ns`、`window_end_ns`、`sort_by` 和 `items`。
-返回的是查询时最近一次保存的已完成窗口。
-
-| 模块 | 对象与主要指标 | 排序依据 |
+| 模块 | 责任对象 | 主排序字段 |
 | --- | --- | --- |
-| `syscall` | PID、syscall ID/名称、次数、累计/最大耗时、错误次数 | `total_duration_ns_desc` |
-| `cpu` | PID、TID、线程使用率、runtime 及其有效性与误差 | `usage_percent_desc` |
-| `lock` | PID、futex 地址、成功明显等待次数、累计/最大等待、等待线程数 | `total_wait_ns_desc` |
+| syscall | PID + 系统调用编号 | total_duration_ns 降序 |
+| cpu | PID + TID | usage_percent 降序 |
+| lock | PID + futex 地址 | total_wait_ns 降序 |
+| io | 设备主/次编号 | p95_duration_ns 降序 |
 
-主指标从大到小排序；相同时按 PID，再按 syscall ID、TID 或锁地址从小到大排序。
-每模块最多 10 项。锁地址使用十六进制字符串，以免 JSON 客户端转换浮点数损失精度。
+主指标相同，按 PID/调用编号、PID/TID、PID/锁地址或设备主/次编号升序；每模块最多 10 项。
+CPU 百分比保留可回读精度。锁地址使用十六进制字符串，避免浮点数转换损失。
 
-- Syscall 按分析线程两次 tick 之间消费的已完成调用统计，发布后清空窗口统计。
-  窗口起止表示 tick 区间；队列调度和 ring buffer 排空可能让事件时间与此区间略有偏差。
-  `report` 保留累计数据，`top` 不使用累计数据排序。
-- CPU 使用已有 `/proc` 与 BPF runtime 采样窗口，按线程真实使用率排序。
-  `runtime_valid=false` 表示缺少可信 BPF runtime 依据，不能解释为线程没有运行。
-- Lock 使用 Analyzer 最近结算的固定窗口，沿用已完成 futex 等待的口径。
-  只列出 `wait_count > 0` 的对象，失败和过短的等待仍可在 `report` 中查看。
+Syscall 按两次 tick 之间消费的已完成调用统计，发布后清空本轮记录；它的 tick 区间
+与事件真实时间可能因队列和缓冲区排空略有偏差，累计结果另存于 report。
+CPU 使用 /proc 和 BPF runtime 的真实采样窗口，runtime_valid=false 表示读数不可用，
+不能解释成零运行时间；本轮未取得 CPU 观测时为 null。
+Lock 读取最近结算窗口，仅排名 wait_count>0 的对象。I/O 仅排名有样本设备，
+没有样本但仍处于恢复观察的告警保留在 report，不作为本轮热点。
 
-三个模块的窗口边界未必完全一致，因此各自返回时间；不要把外层更新时间当作
-每个模块的窗口边界。
+四个模块窗口不强行对齐，各自保留时间边界。I/O 还含 window_complete，
+最终不足整窗的结果为 false，尾窗不改变连续异常/恢复次数。
 
-## report 字段
+## report
 
-`data` 含 `updated_ns` 和 `syscall/cpu/lock`。未启用模块返回 `null`；
-CPU、Lock 在没有已完成窗口时也返回 `null`。
-CPU 本轮未得到有效使用率采样时返回 `null`，不会把旧诊断配上零时间戳。
+外层含 updated_ns 和四个模块；禁用模块为 null。
 
-- `syscall`：`since_ns`、`until_ns` 和现有 `syscall_summary` 格式的 `summary`。
-  表示从启动到快照时保留的累计统计；沿用原分析器清理规则，已退出且超过 60 秒
-  没有事件的进程可以被移除，因此不是永久历史档案。
-- `cpu`：现有 `cpu_summary`，含诊断、责任进程/线程、runtime 有效性、受害线程及窗口。
-- `lock`：现有 `lock_summary`，含逐锁统计、阈值和竞争诊断。
-  恢复观察期间保留的触发证据使用独立的 `evidence_window_*`，不伪装成本轮数据。
+- syscall：since_ns、until_ns、summary，summary 保留原 syscall_summary 格式。
+  累计表仍清理已退出且超过 60 秒无事件的进程，不是永久历史档案。
+- cpu：原 cpu_summary，保留诊断、责任/受害线程、runtime、窗口和实际配置 thresholds。
+  没有有效采样窗口时为 null；最终消息不把最近 CPU 结果误标成零时间窗口。
+- lock：原 lock_summary，含逐锁统计、阈值和诊断；恢复期间保留的触发证据使用
+  独立 evidence_window_*，不标成当前窗口。
+- io：原 io_status，包含 enabled、累计计数、probe 和最近 report。
+  已启用但还没有窗口时，io_status.report 为 null；诊断、拒收原因和健康字段不丢失。
 
-Socket 响应会去掉原 Reporter 的排版换行，JSON 字段和分析口径保持原样。
-原有标准输出报告继续保留。
+Socket 会移除原 Reporter 用于排版的换行，仅在完整响应末尾添加 LF。
+daemon 标准输出仍保留连续 JSON 文档格式，Syscall 总结可能跨行。
 
-## 路径、权限和退出
+## 路径与权限
 
-默认地址是 `/run/kylinrca/kylinrca.sock`，可用配置 `socket_path` 修改。
-缺失的父目录会被创建，目录权限遵循运行用户的 umask；Socket 在监听前设为 `0600`。
-通常用 root 运行 daemon，因此查询示例也使用 `sudo`。
+默认 /run/kylinrca/kylinrca.sock，可由公共 socket_path 修改；自动创建缺失父目录，
+目录权限遵循 umask，Socket 在监听前设为 0600。root 启动的 daemon 使用 sudo 查询。
+路径已存在时启动失败，不覆盖其他 daemon 或普通文件。
+正常退出或绑定后启动失败时，删除本进程创建的 Socket，保留父目录。
+SIGKILL 无法执行清理，确认旧进程退出后再手动删除残留路径。
 
-地址已存在时启动失败，不删除其他 daemon 的 Socket 或普通文件。
-正常 SIGINT/SIGTERM 退出以及绑定后的启动失败会清理本进程创建的 Socket；
-父目录保留。SIGKILL 或系统崩溃不能执行清理；确认旧 daemon 已退出后，
-手动删除残留 Socket，再启动。不要删除仍在运行的 daemon 的地址。
+## 双方测试如何合并
 
-## 验证
+| 原测试 | 原覆盖重点 | 当前归属 |
+| --- | --- | --- |
+| event_queue_test.cpp | 长度/类型、副本、关闭排空和等待唤醒 | daemon_fixture.cpp 的队列检查 |
+| io_daemon_test.cpp | 四类型分发、I/O 边界、迟到、恢复、尾窗、并发快照 | 同一 fixture 的 I/O 边界检查 |
+| socket_server_fixture.cpp / socket_server_test.py | 三个查询、排序、断开、慢客户端、路径权限 | daemon_fixture.cpp / daemon_test.py，增加 I/O |
+| daemon_config_options_test.py | 模块参数错误和读取顺序 | daemon_test.py 的配置用例 |
+| check_daemon_socket.py | 三模块热点身份、runtime、协议、两种停止信号和重启 | check_daemon.py 的 socket 场景 |
+| check_daemon_io.py | 临时 loop、fio、四模块重叠、告警恢复和计数闭环 | 统一入口的 io/modes 场景，增加连续 Socket 查询 |
+| check_daemon_module_config.py | CPU/Lock 阈值触发与对照 | 统一入口的 config 场景，同时核对 Socket 阈值 |
 
-```bash
-cmake -S . -B build
-cmake --build build -j4
-ctest --test-dir build --output-on-failure
-```
+无特权回归由一个 daemon_integration 用例运行，fixture 使用与真实 daemon 相同的
+analyze_events，避免另写一套分析流程。I/O 专用算法和配置的独立单测继续保留。
+check_daemon.py 包含完整实采验收：运行入口、Socket 场景、CPU/Lock 配置测试、
+I/O 共存与开关模式，以及共用的查询、连续 JSON 解析和采样记录。
 
-`daemon_socket` 不加载 BPF，使用现有 Analyzer 处理合成事件后通过真实 Socket 查询。
-覆盖窗口/累计区分、排序和条数、CPU runtime 依据、Lock 诊断、空窗口、禁用模块、
-分段请求、非法命令、长响应、提前断开、慢客户端期间继续发布、路径占用与权限清理。
-运行环境需要允许绑定本机 Unix Socket。
+## 提交前完整验证
 
-### 提交 PR 前的完整验证流程
-
-在仓库根目录执行以下命令。编译和自动回归可直接运行；实采步骤需要本地 root 权限。
-
-1. 编译和自动回归：
+1. 编译和无特权回归：
 
    ```bash
    cmake -S . -B build
@@ -142,78 +142,35 @@ ctest --test-dir build --output-on-failure
    git diff --check
    ```
 
-   当前应为 22/22 通过。这里的 Socket 测试使用合成事件，不加载 BPF。
+   daemon_integration 覆盖四模块查询、窗口与累计区分、告警恢复、尾窗、健康计数、
+   模块禁用、配置生效、非法/分段请求、提前断开、8MiB 响应、慢客户端发布与路径清理。
+   合成事件不代表真实 BPF 实采已通过。
 
-2. 运行真实 BPF 验证：
-
-   ```bash
-   sudo python3 scripts/check_daemon_socket.py
-   ```
-
-   脚本使用独立 Socket 路径，自动启动并清理自己创建的 daemon 和负载。
-   大约需要十几秒，过程中会执行：
-
-   - 挂载 Syscall、CPU、Lock，检查真实 PID、模块开关和 Socket 权限 0600。
-   - 创建已知 PID 的 Syscall 写入负载、CPU 计算负载、8 线程 mutex 竞争负载。
-   - 连续请求 status/top/report，核对 Syscall PID、CPU PID/TID/runtime、Lock PID/地址。
-   - 检查热点排序与最多 10 项，确认窗口和事件计数在查询期间继续增长。
-   - 验证非法命令、超长命令、分段发送和提前断开之后仍能正常查询。
-   - 用 SIGINT 退出并检查 Socket 清理；关闭 CPU 模块后重启，核对禁用结果。
-   - 用 SIGTERM 退出并再次检查 Socket 清理。
-
-   每轮记录保存到 `/tmp/kylinrca-issue38/run-*`，末尾会打印实际目录。
-   `summary.json` 的 `passed` 应为 `true`，所有检查应为 PASS。
-   `queries.jsonl` 保存三种查询的原始响应，`lock-workload.txt` 保存真实锁地址，
-   `daemon.log`、`restart.log` 保存启动日志，两个 `.json` 文件保存 daemon 原有输出。
-
-   若失败，查看 `summary.json` 和对应日志。CPU 检查要求测试线程至少一次进入前 10，
-   且有有效 runtime；繁忙机器上的排名或采样问题需要结合原始响应排查。
-   本脚本不要求全系统诊断一定恢复为 NORMAL，其他后台进程仍可能产生告警。
-
-3. 手动确认两个终端的查询方式：
-
-   终端 1 启动 daemon，保持运行：
+2. 完整实采，默认包括三轮隔离 fio：
 
    ```bash
-   sudo ./build/kylinrcad > /tmp/kylinrcad-38-manual.json
+   sudo python3 scripts/check_daemon.py
    ```
 
-   等到 `[daemon] Ready` 后，终端 2 执行：
+   默认记录在 /tmp/kylinrca-daemon-validation/run-*，末尾打印实际位置。
+   results.json 的 passed 必须为 true；各场景记录查询原文、配置、命令与清理结果。
+   fio 只写本轮新建的 128MiB loop 镜像，100μs 是验收阈值，产品默认仍为 10ms。
+   CPU 热点身份检查需要测试线程进入前 10；繁忙机器需结合记录排查排名和 runtime。
+   Socket 场景持续六秒制造锁竞争，分别核对各测试进程的 PID 和锁地址，避免一次短负载
+   落在两次定时快照发布之间而未被查询观察到。查询只返回最近快照，不保存所有历史窗口。
+
+3. 可分场景定位失败，不必重复全部负载：
 
    ```bash
-   sudo python3 - <<'PY'
-   import json, socket
-   for command in ('status', 'top', 'report'):
-       with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-           connection.settimeout(3)
-           connection.connect('/run/kylinrca/kylinrca.sock')
-           connection.sendall((command + '\n').encode())
-           with connection.makefile('rb') as response:
-               print(command, json.dumps(json.loads(response.readline()), indent=2))
-   PY
+   sudo python3 scripts/check_daemon.py --suite socket
+   sudo python3 scripts/check_daemon.py --suite config
+   sudo python3 scripts/check_daemon.py --suite io --repeat 1
+   sudo python3 scripts/check_daemon.py --suite modes
    ```
 
-   三个响应应均为 `ok: true`。终端 1 按 Ctrl+C 后，终端 2 确认路径消失：
+4. 手动双终端：终端 1 运行 sudo ./build/kylinrcad，终端 2 按 README 示例分别发
+   status/top/report。三个响应均为 ok=true；终端 1 Ctrl+C 后确认 Socket 路径消失，
+   再次启动后能继续查询。
 
-   ```bash
-   python3 - <<'PY'
-   from pathlib import Path
-   assert not Path('/run/kylinrca/kylinrca.sock').exists()
-   print('PASS: 手动退出后 Socket 已清理')
-   PY
-   ```
-
-4. PR 中分别记录自动回归、实采脚本和手动查询的真实结果，并附实采输出目录或摘要。
-   B 拉取分支后重复这些命令并完成 Review，作为合并验收。
-
-B 的本地联调步骤：
-
-1. 用 README 的命令启动 daemon，等到 `[daemon] Ready`。
-2. 在另一个终端发送三个请求，确认 `status.modules` 和配置一致。
-3. 运行 README 中的 Syscall、CPU、Lock 真实负载，重复查询 `top/report`，核对负载 PID、
-   TID、锁地址和指标；确认 `status.completed_windows` 及事件计数继续增长。
-4. 负载结束后检查热点和诊断恢复；向 Socket 发送非法命令并提前断开一次，再正常查询。
-5. 按 Ctrl+C 退出 daemon，确认 Socket 路径消失；重新启动后能继续查询。
-6. Review 请求接收、快照发布、查询响应三段代码，并记录实际联调结果。
-
-合成事件测试不代替真实 BPF 验证，也不代替 B 的 Review。
+5. PR 分别记录合成事件回归和实采的真实结果。B 拉取分支复测并 Review，作为合并验收。
+   2026-11-26 的历史实采记录保留在原报告中，不能代替本次统一快照改动的验收。

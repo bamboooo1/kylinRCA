@@ -1,4 +1,4 @@
-"""Exercise the real Unix socket with snapshots built from the existing analyzers."""
+"""统一 daemon 回归：复用真实分析循环，检查四模块快照、队列边界、配置和 Socket 协议。"""
 
 import json
 import os
@@ -13,9 +13,12 @@ import unittest
 
 
 FIXTURE = sys.argv.pop(1)
+DAEMON = sys.argv.pop(1)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from check_daemon import QueryRecorder, check_protocol
 
 
-class SocketServerTest(unittest.TestCase):
+class DaemonQueryTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="kylinrca-socket-")
         self.addCleanup(self.directory.cleanup)
@@ -79,9 +82,9 @@ class SocketServerTest(unittest.TestCase):
         self.assertTrue(status_response["ok"])
         self.assertEqual(status_response["command"], "status")
         self.assertEqual(status_response["data"]["processed_events"],
-                         {"syscall": 14, "cpu": 0, "lock": 4})
+                         {"syscall": 14, "cpu": 0, "lock": 4, "io": 2})
         self.assertEqual(status_response["data"]["modules"],
-                         {"syscall": True, "cpu": True, "lock": True, "io": False})
+                         {"syscall": True, "cpu": True, "lock": True, "io": True})
 
         top_data = self.query("top")["data"]
         self.assertEqual(top_data["syscall"]["window_start_ns"], 2_000_000_000)
@@ -102,20 +105,92 @@ class SocketServerTest(unittest.TestCase):
         reported_processes = report_data["syscall"]["summary"]["processes"]
         self.assertIn(9999, [entry["pid"] for entry in reported_processes])
         self.assertEqual(report_data["cpu"]["diagnosis"]["culprit_tid"], 201)
+        self.assertEqual(report_data["cpu"]["thresholds"]["high_usage_threshold_percent"], 80.5)
+        self.assertTrue(report_data["io"]["enabled"])
+        self.assertEqual(report_data["io"]["received"], 2)
+        self.assertEqual(report_data["io"]["bytes"], 8192)
+        self.assertEqual(report_data["io"]["probe"]["pending"], 2)
+        self.assertEqual([entry["device"] for entry in top_data["io"]["items"]], ["7:1", "7:0"])
+        self.assertEqual([entry["p95_duration_ns"] for entry in top_data["io"]["items"]], [30, 10])
         self.assertEqual(report_data["lock"]["diagnosis"]["type"], "LOCK_CONTENTION")
 
         self.publish("idle")
         idle_top = self.query("top")["data"]
-        for module in ("syscall", "cpu", "lock"):
+        for module in ("syscall", "cpu", "lock", "io"):
             self.assertEqual(idle_top[module]["items"], [])
             self.assertEqual(idle_top[module]["window_end_ns"], 4_000_000_000)
         self.publish("disabled")
         self.assertIsNone(self.query("report")["data"]["syscall"])
         self.assertIsNone(self.query("top")["data"]["lock"])
+        self.assertIsNone(self.query("report")["data"]["io"])
+        self.assertFalse(self.query("status")["data"]["modules"]["io"])
         self.publish("missing_cpu_sample")
         self.assertEqual(self.query("status")["data"]["completed_windows"], 1)
         self.assertIsNone(self.query("top")["data"]["cpu"])
         self.assertIsNone(self.query("report")["data"]["cpu"])
+
+    def test_tick_closes_lock_and_io_windows_without_mixing_events(self):
+        for phase, window, ticks in (("tick_first_window", 0, 1),
+                                     ("tick_second_window", 1, 2),
+                                     ("tick_catch_up", 1, 1)):
+            with self.subTest(phase=phase):
+                self.publish(phase)
+                status = self.query("status")["data"]
+                self.assertEqual(status["completed_windows"], ticks)
+                top = self.query("top")["data"]
+                end_ns = (window + 2) * 1_000_000_000
+                self.assertEqual(top["lock"]["window_end_ns"], end_ns)
+                self.assertEqual(top["io"]["window_end_ns"], end_ns)
+                self.assertEqual([item["lock_addr"] for item in top["lock"]["items"]],
+                                 [hex(0xaaa + window)])
+                self.assertEqual([item["dev_minor"] for item in top["io"]["items"]], [window])
+
+    def test_io_top_limit_and_device_ties(self):
+        self.publish("io_rank")
+        io_top = self.query("top")["data"]["io"]
+        self.assertEqual([item["dev_minor"] for item in io_top["items"]], [2, 5, 8, 11, 1, 4, 7, 10, 0, 3])
+        self.assertEqual([item["p95_duration_ns"] for item in io_top["items"]], [30] * 4 + [20] * 4 + [10] * 2)
+        self.assertEqual(self.query("report")["data"]["io"]["received"], 13)
+
+    def test_final_tick_flushes_lock_when_io_is_disabled(self):
+        self.publish("lock_tail")
+        self.assertFalse(self.query("status")["data"]["modules"]["io"])
+        self.assertIsNone(self.query("report")["data"]["io"])
+        lock_report = self.query("report")["data"]["lock"]
+        self.assertEqual(lock_report["window_end_ns"], 1_300_000_000)
+        self.assertEqual(lock_report["processes"][0]["locks"][0]["wait_count"], 1)
+
+    def test_live_validation_query_recorder(self):
+        self.publish("busy")
+        output_path = Path(self.directory.name) / "queries.jsonl"
+        with QueryRecorder(self.socket_path, output_path) as recorder:
+            deadline = time.monotonic() + 3
+            while len(recorder.replies) < 6 and time.monotonic() < deadline:
+                time.sleep(0.02)
+        self.assertGreaterEqual(len(recorder.replies), 6)
+        self.assertEqual({frame["command"] for frame in recorder.replies}, {"status", "top", "report"})
+        self.assertTrue(all(json.loads(line)["response"]["ok"] for line in output_path.read_text().splitlines()))
+        check_protocol(self.socket_path)
+
+    def test_io_alert_recovery_tail_and_health(self):
+        self.assertIsNone(self.query("top")["data"]["io"])
+        self.assertIsNone(self.query("report")["data"]["io"]["report"])
+        self.publish("io_alert")
+        io_state = self.query("report")["data"]["io"]
+        self.assertEqual(io_state["received"], 3)
+        self.assertEqual(io_state["report"]["diagnoses"][0]["diagnosis"], "IO_LATENCY")
+        self.assertEqual(io_state["report"]["window_end_ns"], 4_000_000_000)
+        self.publish("io_recovery")
+        recovered = self.query("report")["data"]["io"]
+        self.assertEqual(recovered["received"], 3)
+        self.assertEqual(recovered["report"]["diagnoses"], [])
+        self.assertEqual(self.query("top")["data"]["io"]["items"], [])
+        self.publish("io_tail")
+        tail = self.query("report")["data"]["io"]
+        self.assertFalse(tail["report"]["window_complete"])
+        self.assertEqual(tail["report"]["window_end_ns"], 1_300_000_000)
+        self.assertEqual(tail["probe"]["pending"], 2)
+        self.assertEqual(self.query("status")["data"]["completed_windows"], 0)
 
     def test_protocol_errors_fragmentation_and_disconnect(self):
         for command in ("", "unknown", "status extra", "status\r"):
@@ -143,7 +218,7 @@ class SocketServerTest(unittest.TestCase):
         with self.connect_client() as slow_reader:
             slow_reader.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
             slow_reader.sendall(b"report\n")
-            self.assertTrue(slow_reader.recv(1))  # Server has captured the large snapshot.
+            self.assertTrue(slow_reader.recv(1))  # 服务端已取得大快照，正在发送；此时发布新快照仍应立即完成。
             started = time.monotonic()
             self.publish("busy")
             self.publish("idle")
@@ -175,6 +250,54 @@ class SocketServerTest(unittest.TestCase):
             self.server_process.wait(timeout=3)
         self.assertEqual(self.server_process.returncode, 0)
         self.assertFalse(Path(self.socket_path).exists())
+
+
+def run_config_option(binary, args, success):
+    """执行一次参数检查，核对退出状态；失败用例必须在挂载探针前给出配置错误。"""
+    result = subprocess.run([binary, *args], text=True, capture_output=True, timeout=5)
+    if (result.returncode == 0) != success:
+        raise AssertionError(f"unexpected exit: {args}: {result.stderr}")
+    if not success and ("[config]" not in result.stderr or "BPF probe attached" in result.stderr):
+        raise AssertionError(f"did not fail during config parsing: {args}: {result.stderr}")
+    return result
+
+
+
+class DaemonPipelineTest(unittest.TestCase):
+    def test_queue_windows_final_flush_and_concurrent_snapshots(self):
+        result = subprocess.run([FIXTURE, "--self-test"], text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_module_config_options(self):
+        binary = DAEMON
+        help_text = run_config_option(binary, ["--help"], True).stdout
+        for option in ("--config", "--cpu-config", "--lock-config", "--io-config"):
+            if option not in help_text:
+                raise AssertionError("missing option in help: " + option)
+        with tempfile.TemporaryDirectory(prefix="kylinrca-config-options-") as directory:
+            root = Path(directory)
+            empty = root / "empty.conf"
+            empty.write_text("")
+            for option in ("--cpu-config", "--lock-config", "--io-config"):
+                run_config_option(binary, [option], False)
+                run_config_option(binary, [option, str(root / "missing.conf")], False)
+                run_config_option(binary, [option, str(empty), option, str(empty)], False)
+                invalid = root / "invalid.conf"
+                invalid.write_text("window_ms=1000\n")
+                run_config_option(binary, [option, str(invalid)], False)
+            cpu = root / "cpu.conf"
+            cpu.write_text("high_usage_threshold_percent=80.5\nrecovery_threshold_percent=50.25\n")
+            lock = root / "lock.conf"
+            lock.write_text("recovery_windows=1\n")
+            # 最后故意放入未知选项，确保前面全部合法配置被读取，再在挂载前退出。
+            result = run_config_option(binary, ["--lock-config", str(lock), "--io-config", str(empty),
+                                  "--cpu-config", str(cpu), "--config", str(empty), "--unknown", "x"], False)
+            if "unknown or duplicate option: --unknown" not in result.stderr:
+                raise AssertionError(result.stderr)
+            for field in ("high_usage_threshold_percent", "minimum_wait_us"):
+                invalid = root / "public.conf"
+                invalid.write_text(field + "=1\n")
+                run_config_option(binary, ["--config", str(invalid)], False)
 
 
 if __name__ == "__main__":

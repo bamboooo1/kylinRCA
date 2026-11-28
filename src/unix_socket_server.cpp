@@ -35,7 +35,7 @@ void send_response(int client_fd, const std::string& response,
     }
 }
 
-} // namespace
+} // 本文件发送辅助函数命名空间结束
 
 /*记住“窗口地址”和“快照仓库”。*/
 UnixSocketServer::UnixSocketServer(std::string socket_path, const SnapshotStore& snapshots)

@@ -2,6 +2,8 @@
 #include "json_reporter.h"
 
 #include <algorithm>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 #include <tuple>
 #include <utility>
@@ -12,6 +14,7 @@ namespace {
 
 constexpr std::size_t hotspot_limit = 10;
 
+// 根据实际启用模块和分析进度生成 status，计数包含已消费的四类事件，不包含 tick。
 std::string make_status_json(const kylinrca::AppConfig& settings,
                              const AnalysisProgress& progress)
 {
@@ -24,13 +27,15 @@ std::string make_status_json(const kylinrca::AppConfig& settings,
            << ",\"window_ms\":" << settings.window_ms
            << ",\"modules\":{\"syscall\":" << settings.enable_syscall
            << ",\"cpu\":" << settings.enable_cpu
-           << ",\"lock\":" << settings.enable_lock << ",\"io\":false}"
+           << ",\"lock\":" << settings.enable_lock << ",\"io\":" << settings.enable_io << '}'
            << ",\"processed_events\":{\"syscall\":" << progress.syscall_events
            << ",\"cpu\":" << progress.cpu_events
-           << ",\"lock\":" << progress.lock_events << "}}";
+           << ",\"lock\":" << progress.lock_events
+           << ",\"io\":" << progress.io_events << "}}";
     return output.str();
 }
 
+// 展开本轮 PID/系统调用统计，按累计耗时排序后最多输出 10 个对象。
 void write_syscall_top(std::ostream& output, const SyscallAnalyzer& syscall_window)
 {
     struct SyscallHotspot {
@@ -67,8 +72,10 @@ void write_syscall_top(std::ostream& output, const SyscallAnalyzer& syscall_wind
     output << ']';
 }
 
+// 按本轮线程使用率进行全局排序，保留 runtime 的有效性和测量区间。
 void write_cpu_top(std::ostream& output, const CpuUsageObservation& cpu_window)
 {
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
     /*struct CpuThreadUsageObservation {
     uint32_t tid = 0;
     std::string comm;
@@ -110,6 +117,7 @@ void write_cpu_top(std::ostream& output, const CpuUsageObservation& cpu_window)
     output << ']';
 }
 
+// 展开最近结算的锁窗口，按累计成功明显等待排序；失败与短等待仍保留在报告中。
 void write_lock_top(std::ostream& output, const LockAnalyzer& lock_analysis)
 {
     /*struct LockStats {
@@ -160,7 +168,35 @@ void write_lock_top(std::ostream& output, const LockAnalyzer& lock_analysis)
     output << ']';
 }
 
-} // namespace
+// 按设备最近窗口的 P95 耗时排序；无样本的持续告警仍由 report 返回。
+void write_io_top(std::ostream& output, const IoReport& report)
+{
+    std::vector<const IoStats*> hotspots;
+    for (const auto& device_stats : report.devices)
+        if (device_stats.count)
+            hotspots.push_back(&device_stats);
+    std::sort(hotspots.begin(), hotspots.end(), [](const auto* left, const auto* right) {
+        if (left->p95_duration_ns != right->p95_duration_ns)
+            return left->p95_duration_ns > right->p95_duration_ns;
+        return std::tie(left->major, left->minor) < std::tie(right->major, right->minor);
+    });
+    output << '[';
+    for (std::size_t index = 0; index < std::min(hotspot_limit, hotspots.size()); ++index) {
+        const auto& device_stats = *hotspots[index];
+        if (index)
+            output << ',';
+        output << "{\"device\":\"" << device_stats.major << ':' << device_stats.minor
+               << "\",\"dev_major\":" << device_stats.major << ",\"dev_minor\":" << device_stats.minor
+               << ",\"sample_count\":" << device_stats.count << ",\"bytes\":" << device_stats.bytes
+               << ",\"avg_duration_ns\":" << device_stats.avg_duration_ns
+               << ",\"p95_duration_ns\":" << device_stats.p95_duration_ns
+               << ",\"p99_duration_ns\":" << device_stats.p99_duration_ns
+               << ",\"error_count\":" << device_stats.errors << '}';
+    }
+    output << ']';
+}
+
+} // 本文件序列化辅助函数命名空间结束
 
 /*创建 SnapshotStore 对象时，用传入的 initial_snapshot 创建一份只读快照，
     并把管理它的共享指针保存到内部成员变量 current_snapshot_ 中。*/
@@ -176,7 +212,7 @@ void SnapshotStore::publish(DaemonSnapshot next_snapshot)
         std::lock_guard<std::mutex> guard(mutex_);
         current_snapshot_.swap(replacement);
     }
-    // The old snapshot is released outside the lock; readers may still be using it.
+    // 在锁外释放旧快照；已有查询持有共享指针时，旧快照会继续保留。
 }
 
 std::shared_ptr<const DaemonSnapshot> SnapshotStore::read() const
@@ -191,7 +227,8 @@ DaemonSnapshot make_daemon_snapshot(const kylinrca::AppConfig& settings,
                                   const SyscallAnalyzer& syscall_window,
                                   const CpuUsageObservation& cpu_window,
                                   const CpuAnalyzer& cpu_analysis,
-                                  const LockAnalyzer& lock_analysis)
+                                  const LockAnalyzer& lock_analysis,
+                                  const IoSnapshot& io_state)
 {
     //创建一个叫 hotspots 的“文字收集器”，可以不断往里面追加内容
     std::ostringstream hotspots;
@@ -226,6 +263,18 @@ DaemonSnapshot make_daemon_snapshot(const kylinrca::AppConfig& settings,
     } else {
         hotspots << "null";
     }
+    hotspots << ",\"io\":";
+    if (io_state.enabled && io_state.report) {
+        const auto& io_report = *io_state.report;
+        hotspots << "{\"window_start_ns\":" << io_report.window_start_ns
+                 << ",\"window_end_ns\":" << io_report.window_end_ns
+                 << ",\"window_complete\":" << std::boolalpha << io_report.window_complete
+                 << ",\"sort_by\":\"p95_duration_ns_desc\",\"items\":";
+        write_io_top(hotspots, io_report);
+        hotspots << '}';
+    } else {
+        hotspots << "null";
+    }
     hotspots << '}';
 
     std::ostringstream reports;
@@ -239,7 +288,7 @@ DaemonSnapshot make_daemon_snapshot(const kylinrca::AppConfig& settings,
     reports << ",\"cpu\":";
     if (settings.enable_cpu && cpu_window.timestamp_ns)
         reports << JsonReporter::report_cpu(cpu_analysis.diagnosis(), cpu_window.window_start_ns,
-                                           cpu_window.timestamp_ns, progress.cpu_events);
+                                           cpu_window.timestamp_ns, progress.cpu_events, &cpu_analysis.config());
     else
         reports << "null";
     reports << ",\"lock\":";
@@ -247,7 +296,7 @@ DaemonSnapshot make_daemon_snapshot(const kylinrca::AppConfig& settings,
         reports << JsonReporter::report_locks(lock_analysis);
     else
         reports << "null";
-    reports << '}';
+    reports << ",\"io\":" << (io_state.enabled ? io_snapshot_json(io_state) : "null") << '}';
 
-    return {make_status_json(settings, progress), hotspots.str(), reports.str()};
+    return {make_status_json(settings, progress), hotspots.str(), reports.str(), io_state};
 }
